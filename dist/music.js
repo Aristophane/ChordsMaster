@@ -93,6 +93,9 @@ export function spellDegree(root, degree) {
   return LETTERS[letterIdx]+(alteration>0?'♯'.repeat(alteration):'♭'.repeat(-alteration));
 }
 export const frenchName = name => FR[name[0]]+name.slice(1);
+export function chordLabel(chord, preference='sharp') {
+  return noteName(chord.root,preference)+chord.suffix+(chord.bass!==chord.root?'/'+noteName(chord.bass,preference):'');
+}
 export function spelledOctave(name, midi) {
   const letter=LETTERS.indexOf(name[0]);
   const alteration=[...name.slice(1)].reduce((n,c)=>n+(c==='♯'?1:c==='♭'?-1:0),0);

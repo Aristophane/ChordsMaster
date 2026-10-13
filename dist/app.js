@@ -1,5 +1,6 @@
-import { mod, TUNINGS, noteName, frenchName, spelledOctave, analyze, guitarNotes, findFingering, transposeGuitar, intervalName } from './music.js';
+import { mod, TUNINGS, noteName, frenchName, chordLabel, analyze, guitarNotes, findFingering, transposeGuitar, intervalName } from './music.js';
 import { createChordPDF } from './pdf.js';
+import { moveChord } from './reorder.js';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -10,7 +11,6 @@ let storageUnreadable=false;
 const tuningLabel=()=>state.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===state.tuningId)?.name||'Personnalisé';
 const notes=()=>state.mode==='guitar'?guitarNotes(state.frets,state.tuning):[...state.pianoNotes];
 const displayNote=(n,octave=false)=>noteName(n,state.preference,state.french,octave);
-const toneName=name=>state.french?frenchName(name):name;
 
 function notify(message,error=false,undo=false){
   clearTimeout(toastTimer);
@@ -52,10 +52,8 @@ function update(){
   $('piano-editor-intro').hidden=state.mode!=='piano';
   document.querySelectorAll('[data-mode]').forEach(b=>{const active=b.dataset.mode===state.mode;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
   $('sync-label').hidden=state.mode==='piano';
-  $('piano-eyebrow').textContent=state.mode==='piano'?'CLIQUEZ SUR LES TOUCHES POUR COMPOSER':'LES MÊMES NOTES, UN AUTRE REGARD';
   const mapped=state.mode==='guitar'?state.frets:findFingering(current,state.tuning,state.frets);
-  $('piano-mapping').textContent=current.length?(mapped?'Une position exacte est disponible sur la guitare.':'Ces hauteurs ne tiennent pas sur six cordes dans cet accordage. Votre accord reste disponible au piano.'):'Choisissez une première note sur le clavier.';
-  $('position-notation').innerHTML=state.mode==='guitar'?state.frets.map((f,i)=>`<span class="${f===null?'':'played'}" title="Corde ${6-i}">${f===null?'×':f}</span>`).join(''):[...current].sort((a,b)=>a-b).map(n=>`<span class="played">${esc(displayNote(n,true))}</span>`).join('');
+  $('piano-mapping').textContent=current.length&&!mapped?'Position impossible sur six cordes avec cet accordage.':'';
   $('transpose-value').textContent=state.transpose>0?'+'+state.transpose:state.transpose;
   $('transpose-plural').textContent=Math.abs(state.transpose)>1?'s':'';
   $('transpose-down').disabled=$('transpose-up').disabled=$('clear-button').disabled=current.length===0;
@@ -69,34 +67,30 @@ function renderAnalysis(){
   $('result-status').classList.toggle('unknown',!chosen);
   $('result-status').textContent=chosen?'Reconnu':result.kind==='empty'?'À vous de jouer':result.kind==='unknown'?'À explorer':'Notes choisies';
   if(chosen){
-    symbol.textContent=chosen.symbol;
-    symbol.classList.toggle('long-symbol',chosen.symbol.length>9);
+    symbol.textContent=chordLabel(chosen,state.preference);
+    symbol.classList.toggle('long-symbol',symbol.textContent.length>9);
     $('chord-title').textContent=frenchName(chosen.rootName)+' '+chosen.title;
     $('chord-inversion').textContent=chosen.inversion;
     $('chord-inversion').hidden=false;
-    $('tone-list').innerHTML=chosen.tones.filter(t=>t.present).map(t=>`<span class="tone ${t.degree==='1'?'root':''}"><strong>${esc(toneName(t.name))}</strong><small>${esc(t.degree)}</small></span>`).join('');
+    $('tone-list').innerHTML=chosen.tones.filter(t=>t.present).map(t=>`<span class="tone ${t.degree==='1'?'root':''}"><strong>${esc(displayNote(t.pc))}</strong><small>${esc(t.degree)}</small></span>`).join('');
     $('omission-note').hidden=!chosen.omitted.length;
     $('omission-note').textContent='Quinte juste omise · sans 5';
   }else{
     symbol.classList.add('unknown-symbol');
-    symbol.textContent=result.kind==='empty'?'À vous de jouer.':result.kind==='single'?displayNote(result.notes[0]):result.kind==='interval'?intervalName(result.notes):'Notes libres';
-    $('chord-title').textContent=result.kind==='empty'?'Choisissez quelques notes sur un instrument.':result.kind==='single'?'Une hauteur de note, éventuellement doublée à l’octave.':result.kind==='interval'?'Deux classes de hauteur : un intervalle, sans triade complète.':'Aucun accord du catalogue ne décrit exactement ces notes. Explorez une autre note ou un autre contexte.';
+    symbol.textContent=result.kind==='empty'?'—':result.kind==='single'?displayNote(result.notes[0]):result.kind==='interval'?intervalName(result.notes):'Notes libres';
+    $('chord-title').textContent=result.kind==='empty'?'Sélectionnez vos notes':result.kind==='single'?'Note / octaves':result.kind==='interval'?'Intervalle':'Aucune formule exacte du catalogue';
     $('chord-inversion').hidden=true;
     $('tone-list').innerHTML=(result.pcs||[]).map(pc=>`<span class="tone"><strong>${esc(displayNote(pc))}</strong><small>note</small></span>`).join('');
     $('omission-note').hidden=true;
   }
   const bass=result.notes[0];
-  const bassSpelling=chosen?.tones.find(t=>t.pc===mod(bass))?.name;
-  $('bass-note').innerHTML=bass===undefined?'—':`${esc(bassSpelling?toneName(bassSpelling):displayNote(bass))}${bassSpelling?spelledOctave(bassSpelling,bass):Math.floor(bass/12)-1} <span>(${esc(noteName(bass,state.preference,false,true))})</span>`;
+  $('bass-note').textContent=bass===undefined?'—':displayNote(bass,true);
   $('alternatives').hidden=result.candidates.length<2;
-  $('chord-alternative').innerHTML=result.candidates.map(c=>`<option value="${esc(c.key)}" ${c.key===chosen?.key?'selected':''}>${esc(c.symbol)}${c.omitted.length?' · sans 5':''}</option>`).join('');
-  $('mobile-symbol').textContent=symbol.textContent;
-  $('mobile-title').textContent=chosen?frenchName(chosen.rootName)+' '+chosen.title:result.kind==='unknown'?'Aucune lecture exacte du catalogue':result.kind==='empty'?'Choisissez vos premières notes':'Vos notes sélectionnées';
+  $('chord-alternative').innerHTML=result.candidates.map(c=>`<option value="${esc(c.key)}" ${c.key===chosen?.key?'selected':''}>${esc(chordLabel(c,state.preference))}${c.omitted.length?' · sans 5':''}</option>`).join('');
 }
 
 function labelForMidi(midi,withOctave=false){
-  const spelled=chosen?.tones.find(t=>t.pc===mod(midi))?.name;
-  return (spelled?toneName(spelled):displayNote(midi))+(withOctave?(spelled?spelledOctave(spelled,midi):Math.floor(midi/12)-1):'');
+  return displayNote(midi,withOctave);
 }
 function renderGuitar(){
   const start=state.range==='all'?1:Number(state.range)+1;
@@ -135,7 +129,7 @@ function renderPiano(){
   $('piano').style.minWidth=Math.max(680,whites.length*24)+'px';
   $('piano').innerHTML=html;
   if(focused!==undefined)$('piano').querySelector(`[data-midi="${focused}"]`)?.focus({preventScroll:true});
-  $('piano-range-label').textContent=displayNote(start,true)+' — '+displayNote(end,true)+' · octaves scientifiques';
+  $('piano-range-label').textContent=displayNote(start,true)+' — '+displayNote(end,true);
 }
 
 function chooseMode(mode){
@@ -214,12 +208,18 @@ function miniGuitar(entry,c){
   const playable=entry.frets.some(f=>f!==null);
   if(!playable)return '<svg class="mini-guitar" viewBox="0 0 86 109" aria-label="Accord créé au piano"><path d="M5 25h76v52H5zM16 25v52m11-52v52m11-52v52m11-52v52m11-52v52m11-52v52" stroke="#c7c6b9"/><path d="M13 25v30h8V25m4 0v30h8V25m17 0v30h8V25m4 0v30h8V25" fill="#3d4138" stroke="none"/><text x="43" y="96" text-anchor="middle">PIANO</text></svg>';
   const used=entry.frets.filter(f=>f!==null&&f>0),min=used.length?Math.min(...used):1,max=used.length?Math.max(...used):4;
-  const start=max<=4?1:min,rows=Math.max(4,max-start+1),height=68,step=height/rows;
-  let svg=`<svg class="mini-guitar" viewBox="0 0 86 109" aria-label="Position ${esc(entry.frets.map(f=>f===null?'x':f).join(' '))}">`;
-  for(let s=0;s<6;s++)svg+=`<path d="M${18+s*11} 25v68" stroke="#b9b8aa"/>`;
-  for(let f=0;f<=rows;f++)svg+=`<path d="M18 ${25+f*step}h55" stroke="#c6c5b8" ${f===0&&start===1?'stroke-width="3"':''}/>`;
-  if(start>1)svg+=`<text x="3" y="${25+step*.7}">${start}</text>`;
-  entry.frets.forEach((f,s)=>{const x=18+s*11;if(f===null)svg+=`<text x="${x}" y="16" text-anchor="middle">×</text>`;else if(f===0)svg+=`<text x="${x}" y="16" text-anchor="middle">○</text>`;else svg+=`<circle class="${c&&mod(entry.tuning[s]+f)===c.root?'root':''}" cx="${x}" cy="${25+(f-start+.5)*step}" r="${Math.min(4,step*.38)}"/>`;svg+=`<text x="${x}" y="105" text-anchor="middle">${f===null?'×':f}</text>`;});
+  const start=max<=4?1:min,rows=Math.max(4,max-start+1),height=Math.max(112,rows*16),step=height/rows,top=30,left=35,width=110;
+  let svg=`<svg class="mini-guitar" viewBox="0 0 160 ${height+58}" role="img" aria-label="Diagramme de guitare, cases ${start} à ${start+rows-1}, position ${esc(entry.frets.map(f=>f===null?'muette':f).join(', '))}">`;
+  for(let s=0;s<6;s++)svg+=`<path class="diagram-string" d="M${left+s*22} ${top}v${height}"/>`;
+  for(let f=0;f<=rows;f++)svg+=`<path class="diagram-fret ${f===0&&start===1?'diagram-nut':''}" d="M${left} ${top+f*step}h${width}"/>`;
+  for(let f=0;f<rows;f++)svg+=`<text class="fret-number" x="18" y="${top+(f+.5)*step+4}" text-anchor="end">${start+f}</text>`;
+  entry.frets.forEach((f,s)=>{
+    const x=left+s*22,isRoot=f!==null&&c&&mod(entry.tuning[s]+f)===c.root;
+    if(f===null)svg+=`<text class="string-mute" x="${x}" y="19" text-anchor="middle">×</text>`;
+    else if(f===0)svg+=`<circle class="open-string ${isRoot?'root':''}" cx="${x}" cy="14" r="5"/>`;
+    else svg+=`<circle class="${isRoot?'root':''}" cx="${x}" cy="${top+(f-start+.5)*step}" r="${Math.min(8,step*.34)}"/>`;
+    svg+=`<text class="string-position" x="${x}" y="${top+height+23}" text-anchor="middle">${f===null?'×':f}</text>`;
+  });
   return svg+'</svg>';
 }
 function renderLibrary(){
@@ -234,11 +234,96 @@ function renderLibrary(){
   $('select-all').indeterminate=state.checked.size>0&&state.checked.size<state.saved.length;
   $('select-all').disabled=!state.saved.length;
   $('library-grid').innerHTML=state.saved.map(entry=>{
-    const {c}=entryAnalysis(entry),symbol=c?.symbol||entry.notes.map(n=>noteName(n,entry.preference)).filter((n,i,a)=>a.indexOf(n)===i).join(' · ');
-    const tones=c?c.tones.filter(t=>t.present).map(t=>t.name):[...new Set(entry.notes.map(n=>noteName(n,entry.preference)))];
-    return `<article class="saved-card ${state.checked.has(entry.id)?'is-checked':''}" data-id="${esc(entry.id)}"><div class="saved-card-header"><span class="eyebrow">${entry.mode==='guitar'?'GUITARE & PIANO':'PIANO'}${c?.omitted.length?' · SANS 5':''}</span><label><span class="sr-only">Sélectionner ${esc(symbol)} pour le PDF</span><input type="checkbox" data-select="${esc(entry.id)}" ${state.checked.has(entry.id)?'checked':''}></label></div><h2>${esc(symbol)}</h2><input class="saved-title-input" aria-label="Nom personnalisé de l’accord" maxlength="80" data-title="${esc(entry.id)}" value="${esc(entry.title)}"><p class="tuning-caption">${esc(entry.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===entry.tuningId)?.name||'Personnalisé')} · ${entry.tuning.map(n=>noteName(n,entry.preference)).join(' – ')}</p><div class="card-diagrams">${miniGuitar(entry,c)}<div><div class="saved-tones">${tones.map(t=>`<span>${esc(t)}</span>`).join('')}</div><p class="saved-midi">${[...entry.notes].sort((a,b)=>a-b).map(n=>noteName(n,entry.preference,false,true)).join(' · ')}${c?'<br>'+esc(c.inversion):''}</p></div></div><div class="saved-actions"><button class="load-chord" data-load="${esc(entry.id)}">Ouvrir dans l’atelier <span aria-hidden="true">↗</span></button><button data-play="${esc(entry.id)}" aria-label="Écouter ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="m8 4 12 8-12 8V4Z"/></svg></button><button data-delete="${esc(entry.id)}" aria-label="Supprimer ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button></div></article>`;
+    const {c}=entryAnalysis(entry),symbol=c?chordLabel(c,entry.preference):entry.notes.map(n=>noteName(n,entry.preference)).filter((n,i,a)=>a.indexOf(n)===i).join(' · ');
+    const tones=c?c.tones.filter(t=>t.present).map(t=>noteName(t.pc,entry.preference)):[...new Set(entry.notes.map(n=>noteName(n,entry.preference)))];
+    return `<article class="saved-card ${state.checked.has(entry.id)?'is-checked':''}" data-id="${esc(entry.id)}"><div class="saved-card-header"><h2>${esc(symbol)}</h2><div class="card-tools"><button class="drag-handle" data-move="${esc(entry.id)}" aria-label="Déplacer ${esc(symbol)}" aria-describedby="reorder-help" title="Glisser pour déplacer · flèches au clavier"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="5" r="1"/><circle cx="16" cy="5" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/></svg></button><label><span class="sr-only">Sélectionner ${esc(symbol)} pour le PDF</span><input type="checkbox" data-select="${esc(entry.id)}" ${state.checked.has(entry.id)?'checked':''}></label></div></div><input class="saved-title-input" aria-label="Nom personnalisé de l’accord" maxlength="80" data-title="${esc(entry.id)}" value="${esc(entry.title)}"><div class="card-diagrams">${miniGuitar(entry,c)}</div><details class="saved-details"><summary>${esc(entry.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===entry.tuningId)?.name||'Personnalisé')}${c?.omitted.length?' · sans 5':''}</summary><p class="tuning-caption">${entry.tuning.map(n=>noteName(n,entry.preference)).join(' – ')}</p><div class="saved-tones">${tones.map(t=>`<span>${esc(t)}</span>`).join('')}</div><p class="saved-midi">${[...entry.notes].sort((a,b)=>a-b).map(n=>noteName(n,entry.preference,false,true)).join(' · ')}${c?'<br>'+esc(c.inversion):''}</p></details><div class="saved-actions"><button class="load-chord" data-load="${esc(entry.id)}">Ouvrir <span aria-hidden="true">↗</span></button><button data-play="${esc(entry.id)}" aria-label="Écouter ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="m8 4 12 8-12 8V4Z"/></svg></button><button data-delete="${esc(entry.id)}" aria-label="Supprimer ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button></div></article>`;
   }).join('');
 }
+function reorderChord(sourceId,targetId,keyboard=false){
+  // Another open tab may have added or edited chords while this card was dragged.
+  let saved=state.saved;
+  try{
+    const raw=JSON.parse(localStorage.getItem(STORAGE)||'null');
+    if(Array.isArray(raw)&&raw.length<=500){
+      const fresh=raw.map(validateEntry);
+      if(fresh.every(Boolean)&&fresh.some(e=>e.id===sourceId)&&fresh.some(e=>e.id===targetId))saved=fresh;
+    }
+  }catch{/* Keep the in-memory collection if storage is unavailable. */}
+  const reordered=moveChord(saved,sourceId,targetId);
+  if(reordered===saved)return;
+  state.saved=reordered;
+  const stored=persist();renderLibrary();
+  if(keyboard)[...$('library-grid').querySelectorAll('[data-move]')].find(el=>el.dataset.move===sourceId)?.focus();
+  if(stored)notify('Accord déplacé · '+(state.saved.findIndex(e=>e.id===sourceId)+1)+' / '+state.saved.length);
+}
+
+let libraryDrag=null,dragFrame=0,suppressClickUntil=0;
+function updateDropTarget(){
+  const drag=libraryDrag;if(!drag?.active)return;
+  const target=document.elementFromPoint(drag.x,drag.y)?.closest('.saved-card');
+  const valid=target&&$('library-grid').contains(target)&&target!==drag.card?target:null;
+  if(valid===drag.target)return;
+  drag.target?.classList.remove('drop-target');
+  drag.target=valid;valid?.classList.add('drop-target');
+}
+function dragAutoScroll(){
+  const drag=libraryDrag;if(!drag?.active)return;
+  const top=64,bottom=innerHeight-64;
+  const delta=drag.y<top?-Math.ceil((top-drag.y)/4):drag.y>bottom?Math.ceil((drag.y-bottom)/4):0;
+  if(delta){window.scrollBy(0,Math.max(-18,Math.min(18,delta)));updateDropTarget();}
+  dragFrame=requestAnimationFrame(dragAutoScroll);
+}
+function endLibraryDrag(commit=false){
+  const drag=libraryDrag;if(!drag)return;
+  libraryDrag=null;cancelAnimationFrame(dragFrame);
+  drag.ghost?.remove();drag.card.classList.remove('is-dragging');drag.target?.classList.remove('drop-target');
+  document.body.classList.remove('sorting-chords');
+  if(drag.card.hasPointerCapture(drag.pointerId))drag.card.releasePointerCapture(drag.pointerId);
+  if(drag.active)suppressClickUntil=Date.now()+250;
+  if(commit&&drag.active&&drag.target)reorderChord(drag.card.dataset.id,drag.target.dataset.id);
+}
+$('library-grid').addEventListener('pointerdown',e=>{
+  if(e.button!==0||libraryDrag)return;
+  const card=e.target.closest('.saved-card');if(!card)return;
+  const handle=e.target.closest('[data-move]');
+  if(e.pointerType==='touch'&&!handle)return;
+  if(!handle&&e.target.closest('button,input,select,a,summary,details'))return;
+  const rect=card.getBoundingClientRect();
+  libraryDrag={card,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,x:e.clientX,y:e.clientY,offsetX:e.clientX-rect.left,offsetY:e.clientY-rect.top,rect,active:false,target:null};
+  card.setPointerCapture(e.pointerId);
+});
+document.addEventListener('pointermove',e=>{
+  const drag=libraryDrag;if(!drag||e.pointerId!==drag.pointerId)return;
+  drag.x=e.clientX;drag.y=e.clientY;
+  if(!drag.active){
+    if(Math.hypot(drag.x-drag.startX,drag.y-drag.startY)<6)return;
+    drag.active=true;drag.ghost=drag.card.cloneNode(true);
+    drag.ghost.className='saved-card drag-ghost';drag.ghost.setAttribute('aria-hidden','true');drag.ghost.inert=true;
+    drag.ghost.style.width=drag.rect.width+'px';document.body.append(drag.ghost);
+    drag.card.classList.add('is-dragging');document.body.classList.add('sorting-chords');
+    dragFrame=requestAnimationFrame(dragAutoScroll);
+  }
+  e.preventDefault();
+  drag.ghost.style.transform=`translate(${drag.x-drag.offsetX}px, ${drag.y-drag.offsetY}px)`;
+  updateDropTarget();
+},{passive:false});
+document.addEventListener('pointerup',e=>{if(libraryDrag&&e.pointerId===libraryDrag.pointerId)endLibraryDrag(true);});
+document.addEventListener('pointercancel',()=>endLibraryDrag());
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&libraryDrag){e.preventDefault();endLibraryDrag();}});
+$('library-grid').addEventListener('lostpointercapture',()=>endLibraryDrag());
+window.addEventListener('blur',()=>endLibraryDrag());
+$('library-grid').addEventListener('click',e=>{if(Date.now()<suppressClickUntil){e.preventDefault();e.stopImmediatePropagation();}},true);
+$('library-grid').addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&libraryDrag){e.preventDefault();endLibraryDrag();return;}
+  const handle=e.target.closest('[data-move]');if(!handle)return;
+  const index=state.saved.findIndex(entry=>entry.id===handle.dataset.move);
+  const columns=getComputedStyle($('library-grid')).gridTemplateColumns.split(' ').length;
+  const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns,Home:-index,End:state.saved.length-1-index};
+  if(!(e.key in offsets))return;
+  e.preventDefault();
+  const to=Math.max(0,Math.min(state.saved.length-1,index+offsets[e.key]));
+  if(to!==index)reorderChord(handle.dataset.move,state.saved[to].id,true);
+});
 function loadChord(entry){
   Object.assign(state,{mode:entry.mode,tuningId:entry.tuningId,tuning:[...entry.tuning],frets:[...entry.frets],pianoNotes:[...entry.notes],preference:entry.preference,allowOmit:entry.allowOmit,chosenKey:entry.chordKey,transpose:0});
   state.range=entry.frets.some(f=>f>12)?'all':0;

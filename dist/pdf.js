@@ -1,4 +1,4 @@
-import { analyze, mod, noteName, frenchName } from './music.js';
+import { analyze, mod, noteName, chordLabel } from './music.js';
 
 // Dependency-free, vector PDF. Built-in Type 1 fonts with explicit WinAnsi encoding.
 const colors={ink:'#302f29',muted:'#77776a',accent:'#a94f37',sage:'#718473',paper:'#f5f3ec',line:'#dfdfd4',soft:'#e6ebe1'};
@@ -49,7 +49,7 @@ function piano(p,entry,chord,x,y,w=346,h=53){
 function chordCard(p,entry,index,top){
   const analysis=analyze(entry.notes,entry.preference,entry.allowOmit);
   const chord=analysis.candidates.find(c=>c.key===entry.chordKey)||analysis.candidates[0];
-  const symbol=chord?.symbol||'Notes libres';
+  const symbol=chord?chordLabel(chord,entry.preference):'Notes libres';
   p.text(43,top+2,String(index+1).padStart(2,'0'),9,colors.accent);
   p.text(68,top,symbol,symbol.length>15?20:28,colors.ink,'F2');
   const nameLines=wrap(entry.title,67).slice(0,2);
@@ -59,7 +59,7 @@ function chordCard(p,entry,index,top){
   const hasGuitar=entry.frets.some(f=>f!==null);
   if(hasGuitar)guitar(p,entry,chord,62,top-75);
   else {p.text(50,top-98,'Hauteurs',9,colors.muted);p.text(50,top-113,'hors manche',9,colors.muted);}
-  const toneText=chord?chord.tones.filter(t=>t.present).map(t=>`${t.name} (${t.degree})`).join('   '):[...new Set(entry.notes.map(n=>noteName(n,entry.preference)))].join('   ');
+  const toneText=chord?chord.tones.filter(t=>t.present).map(t=>`${noteName(t.pc,entry.preference)} (${t.degree})`).join('   '):[...new Set(entry.notes.map(n=>noteName(n,entry.preference)))].join('   ');
   wrap(toneText,74).slice(0,2).forEach((line,i)=>p.text(165,top-76-i*11,line,8,colors.ink));
   piano(p,entry,chord,165,top-148);
   const exact=[...entry.notes].sort((a,b)=>a-b).map(n=>noteName(n,entry.preference,false,true)).join(' · ');

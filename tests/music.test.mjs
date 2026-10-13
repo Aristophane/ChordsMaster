@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, guitarNotes, TUNINGS, spellDegree, spelledOctave, findFingering, transposeGuitar, mod, CHORDS, intervalName } from '../dist/music.js';
+import { analyze, guitarNotes, TUNINGS, spellDegree, spelledOctave, findFingering, transposeGuitar, mod, CHORDS, intervalName, chordLabel } from '../dist/music.js';
 import { createChordPDF, pdfText } from '../dist/pdf.js';
 
 const standard=TUNINGS[0].notes;
@@ -31,6 +31,12 @@ test('Symmetric and sixth/minor-seventh interpretations are exposed',()=>{
   assert(symbols.includes('C6'));assert(symbols.includes('Am7/C'));
   assert.equal(analyze([48,51,54,57]).candidates.filter(c=>c.suffix==='dim7').length,4);
   assert.equal(analyze([48,52,56]).candidates.filter(c=>c.suffix==='aug').length,3);
+});
+test('User-facing chord labels use conventional chromatic bass names',()=>{
+  const chord=analyze([41,50,58]).candidates[0];
+  assert.equal(chord.symbol,'A♯/E♯');
+  assert.equal(chordLabel(chord),'A♯/F');
+  assert.equal(chordLabel(chord,'flat'),'B♭/F');
 });
 test('Omitted fifths require explicit opt-in and never manufacture missing roots or thirds',()=>{
   const c=analyze([48,52,58], 'sharp',true).candidates[0];assert.equal(c.symbol,'C7');assert.deepEqual(c.omitted,['5']);
