@@ -24,6 +24,8 @@ Ouvrir l'adresse affichée, par défaut `http://localhost:4173`. Les fichiers de
 - Écoute avec Web Audio, La4 = 440 Hz.
 - Carnet local persistant, noms personnalisés, suppression annulable, sauvegarde/import JSON.
 - Carnet compact, détails repliables, réorganisation par glisser-déposer ou flèches depuis la poignée. L'ordre est sauvegardé et utilisé dans le PDF.
+- Dossiers : création, renommage, filtre, choix à l'enregistrement et déplacement d'une sélection. Supprimer un dossier conserve ses accords dans « Sans dossier ».
+- Liens de partage : sélectionner des accords, puis « Partager » et « Copier le lien ». Le destinataire prévisualise les positions, peut les écouter ou les ouvrir, puis importe sa sélection dans un dossier de son carnet. Les doublons identiques dans le dossier choisi sont ignorés.
 - Sélection et téléchargement PDF vectoriel paginé, avec manche, clavier, notes et intervalles.
 - Interface responsive, navigation clavier, états accessibles et respect des mouvements réduits.
 
@@ -34,6 +36,10 @@ Les classes de hauteur servent à reconnaître une formule exacte ; les valeurs 
 Le moteur conserve l'orthographe diatonique des degrés (Cdim7 : C E♭ G♭ B♭♭). L'interface, les instruments, le carnet et les PDF affichent les noms chromatiques usuels : Fa plutôt que Mi♯, Ré plutôt que Do♯♯. Le choix dièses/bémols détermine les noms des touches altérées. Les degrés continuent d'indiquer leur rôle harmonique exact. Les symboles 13 incluent ici la neuvième et omettent conventionnellement la onzième naturelle. Les hauteurs utilisent les octaves scientifiques : C4 = MIDI 60. Le PDF utilise `b` et `#` pour les altérations, avec des polices PDF standard.
 
 La recherche de position garantit les notes et une note par corde ; elle ne garantit pas un doigté humain confortable. Une combinaison de touches impossible dans l'accordage donné reste au piano, avec un message explicite. Changer l'accordage conserve les cases et recalcule les hauteurs. Les données restent dans `localStorage`, propres au navigateur et à l'origine du site. Exporter le JSON permet une sauvegarde et un transfert. Google Fonts améliore la typographie ; des polices de repli assurent le fonctionnement sans réseau.
+
+Les dossiers et accords sont enregistrés ensemble dans `chordsmaster.carnet.v2`. Le carnet v1 est lu automatiquement au premier usage et sa copie d'origine reste intacte. Les sauvegardes JSON v1 restent importables ; les nouvelles sauvegardes v2 incluent aussi les dossiers, même vides. Limites : 500 accords et 100 dossiers.
+
+Le partage n'utilise aucun serveur de stockage : le fragment `#partage=…` contient une copie UTF-8 des accords sélectionnés (notes exactes, accordage, position et interprétation). Le fragment n'est pas envoyé dans les requêtes HTTP. Toute personne disposant du lien peut le lire ; il n'y a ni mot de passe, ni expiration, ni révocation ou mise à jour à distance. Le carnet n'est modifié qu'après un clic sur « Ajouter au carnet ». Les liens sont limités à 12 000 caractères ; pour de grandes collections, partager plusieurs sélections ou exporter le JSON. Les données entrantes sont validées avant tout import, sans écraser les accords existants.
 
 ## Publication GitHub Pages
 
@@ -50,5 +56,7 @@ npm test
 ```
 
 Tests du catalogue dans les douze fondamentales et ses renversements, orthographe, ambiguïtés, quintes omises, accordages, assignation des cordes, limites/transposition et structure PDF.
+
+Tests du carnet : migration v1/v2, dossiers et réorganisation filtrée, fusion sans écrasement, collisions d'identifiants, partage Unicode guitare/piano, liens malformés et limite de longueur.
 
 Références : [Open Music Theory : symboles](https://viva.pressbooks.pub/openmusictheory/chapter/chord-symbols/), [renversements](https://viva.pressbooks.pub/openmusictheory/chapter/inversion/), [Fender : accordages](https://www.fender.com/online-guitar-tuner/acoustic-guitar-tuning/).

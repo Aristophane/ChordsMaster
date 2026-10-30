@@ -1,11 +1,14 @@
 import { mod, TUNINGS, noteName, frenchName, chordLabel, analyze, guitarNotes, findFingering, transposeGuitar, intervalName } from './music.js';
 import { createChordPDF } from './pdf.js';
-import { moveChord } from './reorder.js';
+import { readNotebook, mergeNotebook, visibleChords, reorderInFolder, folderName, chordSignature, createShareURL, readShare } from './notebook.js';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const STORAGE='chordsmaster.carnet.v1';
-const state={mode:'guitar',tuningId:'standard',tuning:[40,45,50,55,59,64],frets:[null,3,2,0,0,0],pianoNotes:[],preference:'sharp',french:true,allowOmit:true,chosenKey:null,transpose:0,range:0,showNotes:false,pianoLabels:true,saved:[],checked:new Set()};
+const STORAGE='chordsmaster.carnet.v2', LEGACY_STORAGE='chordsmaster.carnet.v1';
+const state={mode:'guitar',tuningId:'standard',tuning:[40,45,50,55,59,64],frets:[null,3,2,0,0,0],pianoNotes:[],preference:'sharp',french:true,allowOmit:true,chosenKey:null,transpose:0,range:0,showNotes:false,pianoLabels:true,saved:[],folders:[],folder:'all',saveFolder:'',checked:new Set()};
+let shared=null,sharedHash='',sharedChecked=new Set(),folderEdit=null;
+const currentNotebook=()=>({version:2,chords:state.saved,folders:state.folders});
+const filteredChords=()=>visibleChords(state.saved,state.folder);
 let result, chosen, audioContext, toastTimer, pendingDeletion;
 let storageUnreadable=false;
 const tuningLabel=()=>state.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===state.tuningId)?.name||'Personnalisé';
@@ -21,21 +24,13 @@ function notify(message,error=false,undo=false){
   toastTimer=setTimeout(()=>{$('toast').hidden=true;pendingDeletion=null;},undo?9000:4500);
 }
 
-function validateEntry(entry){
-  if(!entry||typeof entry!=='object'||!Array.isArray(entry.notes)||entry.notes.length<1||entry.notes.length>6||!entry.notes.every(n=>Number.isInteger(n)&&n>=24&&n<=107))return null;
-  if(!Array.isArray(entry.tuning)||entry.tuning.length!==6||!entry.tuning.every(n=>Number.isInteger(n)&&n>=28&&n<=71))return null;
-  if(!Array.isArray(entry.frets)||entry.frets.length!==6||!entry.frets.every(f=>f===null||(Number.isInteger(f)&&f>=0&&f<=24)))return null;
-  if(entry.mode!=='guitar'&&entry.mode!=='piano')return null;
-  if(entry.mode==='guitar'&&JSON.stringify([...guitarNotes(entry.frets,entry.tuning)].sort((a,b)=>a-b))!==JSON.stringify([...entry.notes].sort((a,b)=>a-b)))return null;
-  return {id:typeof entry.id==='string'?entry.id.slice(0,100):crypto.randomUUID(),title:typeof entry.title==='string'?entry.title.slice(0,80):'Mon accord',notes:[...entry.notes],tuning:[...entry.tuning],frets:[...entry.frets],mode:entry.mode,tuningId:TUNINGS.some(t=>t.id===entry.tuningId)?entry.tuningId:'custom',preference:entry.preference==='flat'?'flat':'sharp',allowOmit:entry.allowOmit!==false,chordKey:typeof entry.chordKey==='string'?entry.chordKey.slice(0,100):null,createdAt:typeof entry.createdAt==='string'?entry.createdAt:new Date().toISOString()};
-}
 function readStorage(){
-  try {const raw=localStorage.getItem(STORAGE);if(!raw)return;const data=JSON.parse(raw);if(!Array.isArray(data)||data.length>500)throw Error();state.saved=data.map(validateEntry);if(state.saved.some(x=>!x))throw Error();state.saved=state.saved.filter((x,i,a)=>a.findIndex(y=>y.id===x.id)===i);}
+  try {const raw=localStorage.getItem(STORAGE)??localStorage.getItem(LEGACY_STORAGE);const data=raw?readNotebook(JSON.parse(raw)):{chords:[],folders:[]};state.saved=data.chords;state.folders=data.folders;storageUnreadable=false;}
   catch{state.saved=[];storageUnreadable=true;setTimeout(()=>notify('Le carnet existant est illisible ou inaccessible. Exportez vos nouvelles idées en JSON avant de fermer.',true),300);}
 }
 function persist(){
   if(storageUnreadable){notify('La sauvegarde locale est inaccessible. Utilisez la sauvegarde JSON pour garder votre carnet.',true);return false;}
-  try{localStorage.setItem(STORAGE,JSON.stringify(state.saved));return true;}catch{notify('La sauvegarde locale est indisponible ou pleine. Votre carnet peut être exporté en JSON.',true);return false;}
+  try{localStorage.setItem(STORAGE,JSON.stringify(currentNotebook()));return true;}catch{notify('La sauvegarde locale est indisponible ou pleine. Votre carnet peut être exporté en JSON.',true);return false;}
 }
 
 function update(){
@@ -196,9 +191,10 @@ async function playChord(chordNotes=notes()){
 function saveChord(){
   if(!notes().length)return;
   if(state.saved.length>=500){notify('Le carnet contient déjà 500 accords. Exportez-le avant d’en ajouter.',true);return;}
-  const entry={id:crypto.randomUUID(),title:chosen?frenchName(chosen.rootName)+' '+chosen.title:result.kind==='single'?displayNote(result.notes[0]):result.kind==='interval'?intervalName(result.notes):'Notes libres',notes:notes(),mode:state.mode,tuningId:state.tuningId,tuning:[...state.tuning],frets:state.mode==='guitar'?[...state.frets]:findFingering(notes(),state.tuning,state.frets)||Array(6).fill(null),chordKey:chosen?.key||null,preference:state.preference,allowOmit:state.allowOmit,createdAt:new Date().toISOString()};
+  const entry={id:crypto.randomUUID(),title:chosen?frenchName(chosen.rootName)+' '+chosen.title:result.kind==='single'?displayNote(result.notes[0]):result.kind==='interval'?intervalName(result.notes):'Notes libres',notes:notes(),mode:state.mode,tuningId:state.tuningId,tuning:[...state.tuning],frets:state.mode==='guitar'?[...state.frets]:findFingering(notes(),state.tuning,state.frets)||Array(6).fill(null),chordKey:chosen?.key||null,preference:state.preference,allowOmit:state.allowOmit,createdAt:new Date().toISOString(),folderId:state.saveFolder||null};
   const signature=e=>JSON.stringify([e.mode,e.tuning,[...e.notes].sort((a,b)=>a-b),e.frets,e.chordKey]);
-  if(state.saved.some(e=>signature(e)===signature(entry))){notify('Cet accord et cette position sont déjà dans votre carnet.');return;}
+  if(state.saved.some(e=>e.folderId===entry.folderId&&signature(e)===signature(entry))){notify('Cet accord et cette position sont déjà dans ce dossier.');return;}
+  state.folder=state.saveFolder;
   state.saved.unshift(entry);state.checked.add(entry.id);
   const stored=persist();renderLibrary();update();
   if(stored)notify('Accord gardé dans votre carnet.');
@@ -223,38 +219,41 @@ function miniGuitar(entry,c){
   return svg+'</svg>';
 }
 function renderLibrary(){
+  renderFolders();
+  const visible=filteredChords();
   $('saved-count').textContent=state.saved.length;
-  state.checked=new Set([...state.checked].filter(id=>state.saved.some(e=>e.id===id)));
-  $('library-count').textContent=state.saved.length+' accord'+(state.saved.length>1?'s':'');
-  $('library-empty').hidden=state.saved.length>0;
+  state.checked=new Set([...state.checked].filter(id=>visible.some(e=>e.id===id)));
+  $('library-count').textContent=visible.length+' accord'+(visible.length>1?'s':'');
+  $('library-empty').hidden=visible.length>0;
+  $('library-empty-title').textContent=state.saved.length?'Aucun accord dans ce dossier.':'Aucun accord enregistré.';
   $('export-count').textContent=state.checked.size;
-  $('export-pdf').disabled=!state.checked.size;
-  $('backup-button').disabled=!state.saved.length;
-  $('select-all').checked=!!state.saved.length&&state.checked.size===state.saved.length;
-  $('select-all').indeterminate=state.checked.size>0&&state.checked.size<state.saved.length;
-  $('select-all').disabled=!state.saved.length;
-  $('library-grid').innerHTML=state.saved.map(entry=>{
+  $('export-pdf').disabled=$('share-button').disabled=$('move-folder').disabled=!state.checked.size;
+  $('backup-button').disabled=!state.saved.length&&!state.folders.length;
+  $('select-all').checked=!!visible.length&&state.checked.size===visible.length;
+  $('select-all').indeterminate=state.checked.size>0&&state.checked.size<visible.length;
+  $('select-all').disabled=!visible.length;
+  $('library-grid').innerHTML=visible.map(entry=>cardMarkup(entry)).join('');
+}
+function cardMarkup(entry,preview=false){
     const {c}=entryAnalysis(entry),symbol=c?chordLabel(c,entry.preference):entry.notes.map(n=>noteName(n,entry.preference)).filter((n,i,a)=>a.indexOf(n)===i).join(' · ');
     const tones=c?c.tones.filter(t=>t.present).map(t=>noteName(t.pc,entry.preference)):[...new Set(entry.notes.map(n=>noteName(n,entry.preference)))];
-    return `<article class="saved-card ${state.checked.has(entry.id)?'is-checked':''}" data-id="${esc(entry.id)}"><div class="saved-card-header"><h2>${esc(symbol)}</h2><div class="card-tools"><button class="drag-handle" data-move="${esc(entry.id)}" aria-label="Déplacer ${esc(symbol)}" aria-describedby="reorder-help" title="Glisser pour déplacer · flèches au clavier"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="5" r="1"/><circle cx="16" cy="5" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/></svg></button><label><span class="sr-only">Sélectionner ${esc(symbol)} pour le PDF</span><input type="checkbox" data-select="${esc(entry.id)}" ${state.checked.has(entry.id)?'checked':''}></label></div></div><input class="saved-title-input" aria-label="Nom personnalisé de l’accord" maxlength="80" data-title="${esc(entry.id)}" value="${esc(entry.title)}"><div class="card-diagrams">${miniGuitar(entry,c)}</div><details class="saved-details"><summary>${esc(entry.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===entry.tuningId)?.name||'Personnalisé')}${c?.omitted.length?' · sans 5':''}</summary><p class="tuning-caption">${entry.tuning.map(n=>noteName(n,entry.preference)).join(' – ')}</p><div class="saved-tones">${tones.map(t=>`<span>${esc(t)}</span>`).join('')}</div><p class="saved-midi">${[...entry.notes].sort((a,b)=>a-b).map(n=>noteName(n,entry.preference,false,true)).join(' · ')}${c?'<br>'+esc(c.inversion):''}</p></details><div class="saved-actions"><button class="load-chord" data-load="${esc(entry.id)}">Ouvrir <span aria-hidden="true">↗</span></button><button data-play="${esc(entry.id)}" aria-label="Écouter ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="m8 4 12 8-12 8V4Z"/></svg></button><button data-delete="${esc(entry.id)}" aria-label="Supprimer ${esc(symbol)}"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button></div></article>`;
-  }).join('');
+    const folderCaption=!preview&&state.folder==='all'?(state.folders.find(f=>f.id===entry.folderId)?.name||'Sans dossier'):'';
+    const selected=(preview?sharedChecked:state.checked).has(entry.id);
+    return `<article class="saved-card ${selected?'is-checked':''} ${preview?'shared-card':''}" data-id="${esc(entry.id)}"><div class="saved-card-header"><h2>${esc(symbol)}</h2><div class="card-tools">${preview?'':`<button class="drag-handle" data-move="${esc(entry.id)}" aria-label="Déplacer ${esc(symbol)}" aria-describedby="reorder-help" title="Glisser pour déplacer · flèches au clavier"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="5" r="1"/><circle cx="16" cy="5" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/></svg></button>`}<label><span class="sr-only">Sélectionner ${esc(symbol)}</span><input type="checkbox" ${preview?'data-shared-select':'data-select'}="${esc(entry.id)}" ${selected?'checked':''}></label></div></div>${preview?`<p class="saved-title-input">${esc(entry.title)}</p>`:`<input class="saved-title-input" aria-label="Nom personnalisé de l’accord" maxlength="80" data-title="${esc(entry.id)}" value="${esc(entry.title)}">`}<div class="card-diagrams">${miniGuitar(entry,c)}</div><details class="saved-details"><summary>${esc(entry.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===entry.tuningId)?.name||'Personnalisé')}${c?.omitted.length?' · sans 5':''}${folderCaption?`<span class="card-folder"> · ${esc(folderCaption)}</span>`:''}</summary><p class="tuning-caption">${entry.tuning.map(n=>noteName(n,entry.preference)).join(' – ')}</p><div class="saved-tones">${tones.map(t=>`<span>${esc(t)}</span>`).join('')}</div><p class="saved-midi">${[...entry.notes].sort((a,b)=>a-b).map(n=>noteName(n,entry.preference,false,true)).join(' · ')}${c?'<br>'+esc(c.inversion):''}</p></details><div class="saved-actions"><button class="load-chord" data-${preview?'shared-':''}load="${esc(entry.id)}">Ouvrir <span aria-hidden="true">↗</span></button><button data-${preview?'shared-':''}play="${esc(entry.id)}" aria-label="Écouter ${esc(symbol)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8V4Z"/></svg></button>${preview?'':`<button data-delete="${esc(entry.id)}" aria-label="Supprimer ${esc(symbol)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button>`}</div></article>`;
 }
 function reorderChord(sourceId,targetId,keyboard=false){
   // Another open tab may have added or edited chords while this card was dragged.
   let saved=state.saved;
   try{
-    const raw=JSON.parse(localStorage.getItem(STORAGE)||'null');
-    if(Array.isArray(raw)&&raw.length<=500){
-      const fresh=raw.map(validateEntry);
-      if(fresh.every(Boolean)&&fresh.some(e=>e.id===sourceId)&&fresh.some(e=>e.id===targetId))saved=fresh;
-    }
+    const raw=localStorage.getItem(STORAGE);
+    if(raw){const fresh=readNotebook(JSON.parse(raw));if(fresh.chords.some(e=>e.id===sourceId)&&fresh.chords.some(e=>e.id===targetId)){saved=fresh.chords;state.folders=fresh.folders;}}
   }catch{/* Keep the in-memory collection if storage is unavailable. */}
-  const reordered=moveChord(saved,sourceId,targetId);
+  const reordered=reorderInFolder(saved,state.folder,sourceId,targetId);
   if(reordered===saved)return;
   state.saved=reordered;
   const stored=persist();renderLibrary();
   if(keyboard)[...$('library-grid').querySelectorAll('[data-move]')].find(el=>el.dataset.move===sourceId)?.focus();
-  if(stored)notify('Accord déplacé · '+(state.saved.findIndex(e=>e.id===sourceId)+1)+' / '+state.saved.length);
+  if(stored)notify('Accord déplacé · '+(filteredChords().findIndex(e=>e.id===sourceId)+1)+' / '+filteredChords().length);
 }
 
 let libraryDrag=null,dragFrame=0,suppressClickUntil=0;
@@ -316,13 +315,13 @@ $('library-grid').addEventListener('click',e=>{if(Date.now()<suppressClickUntil)
 $('library-grid').addEventListener('keydown',e=>{
   if(e.key==='Escape'&&libraryDrag){e.preventDefault();endLibraryDrag();return;}
   const handle=e.target.closest('[data-move]');if(!handle)return;
-  const index=state.saved.findIndex(entry=>entry.id===handle.dataset.move);
+  const visible=filteredChords(),index=visible.findIndex(entry=>entry.id===handle.dataset.move);
   const columns=getComputedStyle($('library-grid')).gridTemplateColumns.split(' ').length;
-  const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns,Home:-index,End:state.saved.length-1-index};
+  const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns,Home:-index,End:visible.length-1-index};
   if(!(e.key in offsets))return;
   e.preventDefault();
-  const to=Math.max(0,Math.min(state.saved.length-1,index+offsets[e.key]));
-  if(to!==index)reorderChord(handle.dataset.move,state.saved[to].id,true);
+  const to=Math.max(0,Math.min(visible.length-1,index+offsets[e.key]));
+  if(to!==index)reorderChord(handle.dataset.move,visible[to].id,true);
 });
 function loadChord(entry){
   Object.assign(state,{mode:entry.mode,tuningId:entry.tuningId,tuning:[...entry.tuning],frets:[...entry.frets],pianoNotes:[...entry.notes],preference:entry.preference,allowOmit:entry.allowOmit,chosenKey:entry.chordKey,transpose:0});
@@ -337,20 +336,110 @@ function deleteEntry(id){
   state.saved.splice(index,1);state.checked.delete(id);const stored=persist();renderLibrary();if(stored)notify('Accord retiré du carnet.',false,true);
 }
 function undoDelete(){if(!pendingDeletion)return;const {entry,index,selected}=pendingDeletion;state.saved.splice(index,0,entry);if(selected)state.checked.add(entry.id);pendingDeletion=null;persist();renderLibrary();notify('Accord restauré.');}
+function folderOptions(){return '<option value="">Sans dossier</option>'+state.folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');}
+function renderFolders(){
+  if(state.folder!=='all'&&state.folder&&!state.folders.some(f=>f.id===state.folder))state.folder='';
+  if(state.saveFolder&&!state.folders.some(f=>f.id===state.saveFolder))state.saveFolder='';
+  $('folder-filter').innerHTML=`<option value="all">Tous les accords (${state.saved.length})</option><option value="">Sans dossier (${state.saved.filter(e=>!e.folderId).length})</option>`+state.folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name)} (${state.saved.filter(e=>e.folderId===f.id).length})</option>`).join('');
+  $('folder-filter').value=state.folder;
+  $('save-folder').innerHTML=folderOptions();$('save-folder').value=state.saveFolder;
+  $('move-folder').innerHTML='<option value="_choose">Déplacer vers…</option>'+folderOptions();$('move-folder').value='_choose';
+  $('rename-folder').hidden=$('delete-folder').hidden=state.folder==='all'||!state.folder;
+}
+function editFolder(rename=false){
+  folderEdit=rename?state.folder:null;
+  $('folder-form').hidden=false;$('folder-error').textContent='';
+  $('folder-name').value=rename?state.folders.find(f=>f.id===folderEdit)?.name||'':'';
+  $('folder-name').focus();
+}
+function commitFolder(e){
+  e.preventDefault();const name=folderName($('folder-name').value);
+  if(!name){$('folder-error').textContent='Indiquez un nom de dossier.';return;}
+  if(state.folders.some(f=>f.id!==folderEdit&&f.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr'))){$('folder-error').textContent='Un dossier porte déjà ce nom.';return;}
+  if(!folderEdit&&state.folders.length>=100){$('folder-error').textContent='Le carnet contient déjà 100 dossiers.';return;}
+  if(folderEdit){const folder=state.folders.find(f=>f.id===folderEdit);if(!folder){$('folder-error').textContent='Ce dossier a été supprimé dans un autre onglet.';return;}folder.name=name;}
+  else{const id=crypto.randomUUID();state.folders.push({id,name});state.folder=id;state.saveFolder=id;state.checked.clear();}
+  const stored=persist();$('folder-form').hidden=true;renderLibrary();if(stored)notify(folderEdit?'Dossier renommé.':'Dossier créé.');
+  $('folder-filter').focus();
+}
+function removeFolder(){
+  const folder=state.folders.find(f=>f.id===state.folder);if(!folder)return;
+  if(!confirm(`Supprimer le dossier « ${folder.name} » ? Ses accords seront conservés dans « Sans dossier ».`))return;
+  state.folders=state.folders.filter(f=>f.id!==folder.id);
+  state.saved.forEach(e=>{if(e.folderId===folder.id)e.folderId=null;});
+  if(pendingDeletion?.entry.folderId===folder.id)pendingDeletion.entry.folderId=null;
+  state.folder='';state.saveFolder='';state.checked.clear();$('folder-form').hidden=true;
+  const stored=persist();renderLibrary();if(stored)notify('Dossier supprimé. Ses accords sont dans « Sans dossier ».');
+}
+function moveSelection(target){
+  if(target==='_choose'||(target&&!state.folders.some(f=>f.id===target)))return;
+  const count=state.checked.size;
+  state.saved.forEach(e=>{if(state.checked.has(e.id))e.folderId=target||null;});
+  const stored=persist();renderLibrary();if(stored)notify(count+' accord'+(count>1?'s déplacés.':' déplacé.'));
+}
+function shareSelection(){
+  try{
+    const title=state.folders.find(f=>f.id===state.folder)?.name||'';
+    $('share-url').value=createShareURL(location.href,state.saved.filter(e=>state.checked.has(e.id)),title);
+    $('share-result').hidden=false;$('share-url').focus();$('share-url').select();
+  }catch(e){notify(e.message,true);}
+}
+async function copyShare(){
+  try{await navigator.clipboard.writeText($('share-url').value);notify('Lien copié.');}
+  catch{$('share-url').focus();$('share-url').select();notify('Sélectionnez le lien, puis copiez-le avec Ctrl+C ou le menu de votre appareil.');}
+}
+function openShared(){
+  if(sharedHash===location.hash){renderShared();return;}
+  sharedHash=location.hash;shared=null;sharedChecked.clear();
+  try{shared=readShare(location.hash);sharedChecked=new Set(shared.chords.map(e=>e.id));}
+  catch(e){$('shared-error').textContent=e.message;}
+  $('shared-folder').innerHTML=folderOptions()+'<option value="_new">Nouveau dossier…</option>';
+  const existing=shared?.title&&state.folders.find(f=>f.name.toLocaleLowerCase('fr')===shared.title.toLocaleLowerCase('fr'));
+  $('shared-folder').value=existing?existing.id:shared?.title?'_new':'';
+  $('shared-folder-name').value=shared?.title||'';updateSharedFolder();renderShared();
+}
+function updateSharedFolder(){$('shared-folder-name').hidden=$('shared-folder').value!=='_new';}
+function renderShared(){
+  $('shared-error').hidden=!!shared;$('shared-controls').hidden=!shared;
+  $('shared-title').textContent=shared?.title||'Accords partagés';
+  $('shared-grid').innerHTML=shared?shared.chords.map(e=>cardMarkup(e,true)).join(''):'';
+  $('shared-count').textContent=sharedChecked.size+' / '+(shared?.chords.length||0)+' sélectionnés';
+  $('import-shared').disabled=!sharedChecked.size;
+  $('shared-select-all').checked=!!shared&&sharedChecked.size===shared.chords.length;
+  $('shared-select-all').indeterminate=!!sharedChecked.size&&sharedChecked.size<shared.chords.length;
+}
+function importShared(){
+  if(!shared||!sharedChecked.size)return;
+  try{
+    let target=$('shared-folder').value,newFolder=null;
+    if(target==='_new'){
+      const name=folderName($('shared-folder-name').value);if(!name)throw Error('Indiquez le nom du nouveau dossier.');
+      const existing=state.folders.find(f=>f.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr'));
+      if(existing)target=existing.id;
+      else{if(state.folders.length>=100)throw Error('Le carnet contient déjà 100 dossiers.');newFolder={id:crypto.randomUUID(),name};target=newFolder.id;}
+    }else if(target&&!state.folders.some(f=>f.id===target))throw Error('Ce dossier n’existe plus. Choisissez un autre dossier.');
+    const signatures=new Set(state.saved.filter(e=>(e.folderId||'')===target).map(chordSignature));
+    const incoming=shared.chords.filter(e=>sharedChecked.has(e.id)).filter(e=>{const key=chordSignature(e);if(signatures.has(key))return false;signatures.add(key);return true;}).map(e=>({...e,id:crypto.randomUUID(),folderId:target||null,createdAt:new Date().toISOString()}));
+    if(state.saved.length+incoming.length>500)throw Error('Le carnet ne peut pas dépasser 500 accords.');
+    if(!incoming.length){notify('Ces accords sont déjà dans ce dossier.');return;}
+    if(newFolder)state.folders.push(newFolder);
+    state.saved.unshift(...incoming);state.folder=target;state.saveFolder=target;state.checked=new Set(incoming.map(e=>e.id));
+    const stored=persist();renderLibrary();location.hash='carnet';
+    if(stored)notify(incoming.length+' accord'+(incoming.length>1?'s ajoutés au carnet.':' ajouté au carnet.'));
+  }catch(e){notify(e.message,true);}
+}
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 function exportPDF(){try{const entries=state.saved.filter(e=>state.checked.has(e.id));if(!entries.length)return;download(new Blob([createChordPDF(entries)],{type:'application/pdf'}),'ChordsMaster-carnet.pdf');notify('Votre fiche PDF est prête.');}catch(error){console.error(error);notify('Le PDF n’a pas pu être généré. Votre carnet reste disponible.',true);}}
 async function importJSON(file){
   if(!file)return;
   try{
     if(file.size>2_000_000)throw Error('Fichier trop volumineux (2 Mo maximum).');
-    const data=JSON.parse(await file.text());if(data.version!==1||!Array.isArray(data.chords)||data.chords.length>500)throw Error('Format de sauvegarde ChordsMaster non reconnu.');
-    const entries=data.chords.map(validateEntry);if(entries.some(e=>!e))throw Error('La sauvegarde contient un accord invalide. Aucun accord n’a été importé.');
-    const incoming=entries.filter((e,i,a)=>!state.saved.some(s=>s.id===e.id)&&a.findIndex(x=>x.id===e.id)===i);
-    if(state.saved.length+incoming.length>500)throw Error('Le carnet ne peut pas dépasser 500 accords.');
-    state.saved.unshift(...incoming);incoming.forEach(e=>state.checked.add(e.id));const stored=persist();renderLibrary();if(stored)notify(incoming.length+' accord'+(incoming.length>1?'s importés.':' importé.'));
+    const incoming=readNotebook(JSON.parse(await file.text())),merged=mergeNotebook(currentNotebook(),incoming);
+    state.saved=merged.chords;state.folders=merged.folders;state.folder='all';state.checked=new Set(merged.added.map(e=>e.id));
+    const stored=persist();renderLibrary();if(stored)notify(merged.added.length+' accord'+(merged.added.length>1?'s importés.':' importé.'));
   }catch(e){notify(e.message||'Impossible de lire cette sauvegarde.',true);}finally{$('import-file').value='';}
 }
-function navigate(){const library=location.hash==='#carnet';$('atelier-page').hidden=library;$('carnet-page').hidden=!library;document.querySelectorAll('[data-page]').forEach(a=>a.classList.toggle('active',a.dataset.page===(library?'carnet':'atelier')));if(library)renderLibrary();}
+function navigate(){const library=location.hash==='#carnet',sharing=location.hash.startsWith('#partage=');$('atelier-page').hidden=library||sharing;$('carnet-page').hidden=!library;$('partage-page').hidden=!sharing;document.querySelectorAll('[data-page]').forEach(a=>a.classList.toggle('active',!sharing&&a.dataset.page===(library?'carnet':'atelier')));if(library)renderLibrary();if(sharing)openShared();}
 
 $('tuning-select').innerHTML=TUNINGS.map(t=>`<option value="${t.id}">${t.name} · ${t.notes.map(n=>noteName(n)).join(' ')}</option>`).join('')+'<option value="custom">Personnalisé…</option>';
 $('tuning-select').addEventListener('change',changeTuning);
@@ -398,9 +487,21 @@ $('library-grid').addEventListener('input',e=>{
   if(entry){entry.title=e.target.value.slice(0,80)||'Mon accord';persist();}
 });
 $('library-grid').addEventListener('click',e=>{const load=e.target.closest('[data-load]'),play=e.target.closest('[data-play]'),del=e.target.closest('[data-delete]');if(load)loadChord(state.saved.find(s=>s.id===load.dataset.load));else if(play)playChord(state.saved.find(s=>s.id===play.dataset.play).notes);else if(del)deleteEntry(del.dataset.delete);});
-$('select-all').addEventListener('change',e=>{state.checked=e.target.checked?new Set(state.saved.map(s=>s.id)):new Set();renderLibrary();});
+$('select-all').addEventListener('change',e=>{state.checked=e.target.checked?new Set(filteredChords().map(s=>s.id)):new Set();renderLibrary();});
+$('folder-filter').addEventListener('change',e=>{state.folder=e.target.value;if(state.folder!=='all')state.saveFolder=state.folder;state.checked.clear();$('folder-form').hidden=true;$('share-result').hidden=true;renderLibrary();});
+$('save-folder').addEventListener('change',e=>{state.saveFolder=e.target.value;});
+$('new-folder').addEventListener('click',()=>editFolder());$('rename-folder').addEventListener('click',()=>editFolder(true));
+$('folder-form').addEventListener('submit',commitFolder);$('cancel-folder').addEventListener('click',()=>{$('folder-form').hidden=true;$('new-folder').focus();});
+$('folder-name').addEventListener('keydown',e=>{if(e.key==='Escape'){$('folder-form').hidden=true;$('new-folder').focus();}});
+$('delete-folder').addEventListener('click',removeFolder);$('move-folder').addEventListener('change',e=>moveSelection(e.target.value));
+$('share-button').addEventListener('click',shareSelection);$('copy-share').addEventListener('click',copyShare);$('close-share').addEventListener('click',()=>{$('share-result').hidden=true;$('share-button').focus();});
+$('shared-folder').addEventListener('change',updateSharedFolder);$('import-shared').addEventListener('click',importShared);
+$('shared-select-all').addEventListener('change',e=>{sharedChecked=e.target.checked?new Set(shared.chords.map(e=>e.id)):new Set();renderShared();});
+$('shared-grid').addEventListener('change',e=>{const id=e.target.dataset.sharedSelect;if(id){e.target.checked?sharedChecked.add(id):sharedChecked.delete(id);renderShared();}});
+$('shared-grid').addEventListener('click',e=>{const load=e.target.closest('[data-shared-load]'),play=e.target.closest('[data-shared-play]');if(load)loadChord(shared.chords.find(s=>s.id===load.dataset.sharedLoad));else if(play)playChord(shared.chords.find(s=>s.id===play.dataset.sharedPlay).notes);});
 $('export-pdf').addEventListener('click',exportPDF);
-$('backup-button').addEventListener('click',()=>download(new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),chords:state.saved},null,2)],{type:'application/json'}),'ChordsMaster-sauvegarde.json'));
+$('backup-button').addEventListener('click',()=>download(new Blob([JSON.stringify({...currentNotebook(),exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),'ChordsMaster-sauvegarde.json'));
 $('import-button').addEventListener('click',()=>$('import-file').click());$('import-file').addEventListener('change',e=>importJSON(e.target.files[0]));
 window.addEventListener('hashchange',navigate);
+window.addEventListener('storage',e=>{if(e.key!==STORAGE)return;endLibraryDrag();readStorage();renderLibrary();if(location.hash.startsWith('#partage=')){sharedHash='';openShared();}});
 readStorage();renderLibrary();update();navigate();
