@@ -227,7 +227,8 @@ function renderLibrary(){
   $('library-empty').hidden=visible.length>0;
   $('library-empty-title').textContent=state.saved.length?'Aucun accord dans ce dossier.':'Aucun accord enregistré.';
   $('export-count').textContent=state.checked.size;
-  $('export-pdf').disabled=$('share-button').disabled=$('move-folder').disabled=!state.checked.size;
+  $('export-pdf').disabled=$('move-folder').disabled=!state.checked.size;
+  $('share-button').disabled=!visible.length;
   $('backup-button').disabled=!state.saved.length&&!state.folders.length;
   $('select-all').checked=!!visible.length&&state.checked.size===visible.length;
   $('select-all').indeterminate=state.checked.size>0&&state.checked.size<visible.length;
@@ -380,13 +381,14 @@ function moveSelection(target){
 function shareSelection(){
   try{
     const title=state.folders.find(f=>f.id===state.folder)?.name||'';
-    $('share-url').value=createShareURL(location.href,state.saved.filter(e=>state.checked.has(e.id)),title);
-    $('share-result').hidden=false;$('share-url').focus();$('share-url').select();
+    const visible=filteredChords(),selected=visible.filter(e=>state.checked.has(e.id));
+    $('share-url').value=createShareURL(location.href,selected.length?selected:visible,title);
+    copyShare();
   }catch(e){notify(e.message,true);}
 }
 async function copyShare(){
-  try{await navigator.clipboard.writeText($('share-url').value);notify('Lien copié.');}
-  catch{$('share-url').focus();$('share-url').select();notify('Sélectionnez le lien, puis copiez-le avec Ctrl+C ou le menu de votre appareil.');}
+  try{await navigator.clipboard.writeText($('share-url').value);$('share-result').hidden=true;notify('Lien copié.');}
+  catch{$('share-result').hidden=false;$('share-url').focus();$('share-url').select();notify('Sélectionnez le lien, puis copiez-le avec Ctrl+C ou le menu de votre appareil.');}
 }
 function openShared(){
   if(sharedHash===location.hash){renderShared();return;}

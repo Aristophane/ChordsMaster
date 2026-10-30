@@ -25,7 +25,7 @@ Ouvrir l'adresse affichée, par défaut `http://localhost:4173`. Les fichiers de
 - Carnet local persistant, noms personnalisés, suppression annulable, sauvegarde/import JSON.
 - Carnet compact, détails repliables, réorganisation par glisser-déposer ou flèches depuis la poignée. L'ordre est sauvegardé et utilisé dans le PDF.
 - Dossiers : création, renommage, filtre, choix à l'enregistrement et déplacement d'une sélection. Supprimer un dossier conserve ses accords dans « Sans dossier ».
-- Liens de partage : sélectionner des accords, puis « Partager » et « Copier le lien ». Le destinataire prévisualise les positions, peut les écouter ou les ouvrir, puis importe sa sélection dans un dossier de son carnet. Les doublons identiques dans le dossier choisi sont ignorés.
+- Liens de partage : « Partager » copie directement le lien de la sélection. Sans sélection, tous les accords affichés sont partagés (le dossier ouvert ou tout le carnet). Si le navigateur refuse la copie, le lien est affiché pour une copie manuelle. Le destinataire prévisualise les positions, peut les écouter ou les ouvrir, puis importe sa sélection dans un dossier de son carnet. Les doublons identiques dans le dossier choisi sont ignorés.
 - Sélection et téléchargement PDF vectoriel paginé, avec manche, clavier, notes et intervalles.
 - Interface responsive, navigation clavier, états accessibles et respect des mouvements réduits.
 
