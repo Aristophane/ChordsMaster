@@ -2,6 +2,7 @@ import { TUNINGS, guitarNotes } from './music.js';
 import { moveChord } from './reorder.js';
 
 export const MAX_CHORDS=500, MAX_FOLDERS=100, MAX_SHARE_LENGTH=12000;
+const MAX_SHARE_BYTES=500_000;
 const uuid=()=>crypto.randomUUID();
 const validId=value=>typeof value==='string'&&value.length>0&&value.length<=100;
 export const folderName=value=>typeof value==='string'?value.trim().slice(0,60):'';
@@ -56,30 +57,77 @@ export function reorderInFolder(chords,folder,source,target){
 }
 export function chordSignature(e){return JSON.stringify([e.title,e.mode,e.tuning,e.notes,e.frets,e.chordKey,e.preference,e.allowOmit]);}
 
-// Compact UTF-8 data lives in the fragment, which is not sent in HTTP requests.
-export function createShareURL(base,chords,title=''){
+const toBase64=bytes=>btoa(Array.from(bytes,b=>String.fromCharCode(b)).join('')).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+const fromBase64=text=>Uint8Array.from(atob(text.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
+async function boundedBytes(stream,limit=MAX_SHARE_BYTES){
+  const reader=stream.getReader(),chunks=[];let size=0;
+  try{
+    while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw Error('Données de partage trop volumineuses.');}chunks.push(value);}
+  }finally{reader.releaseLock();}
+  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
+}
+
+// v2 shares one tuning definition per collection and derives guitar MIDI notes
+// from the exact fingering. DEFLATE removes repetition without a server/library.
+export async function createShareURL(base,chords,title=''){
   if(!chords.length||chords.length>MAX_CHORDS)throw Error('Sélectionnez au moins un accord.');
   const entries=chords.map(validateEntry);
   if(entries.some(e=>!e))throw Error('Un accord ne peut pas être partagé.');
-  const compact=entries.map(e=>[e.title,e.notes,e.tuning,e.frets,e.mode==='piano'?1:0,e.tuningId,e.preference==='flat'?1:0,e.allowOmit?1:0,e.chordKey]);
-  const bytes=new TextEncoder().encode(JSON.stringify([1,folderName(title),compact]));
-  const encoded=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join('')).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
-  const url=new URL(base);url.hash='partage='+encoded;
+  const tunings=[],keys=[];
+  const compact=entries.map(e=>{
+    const tuning=e.tuningId==='custom'?e.tuning:e.tuningId,key=JSON.stringify(tuning);
+    let index=keys.indexOf(key);if(index<0){index=tunings.length;keys.push(key);tunings.push(tuning);}
+    const frets=e.frets.map(f=>f===null?'-':f.toString(36)).join('');
+    const flags=(e.mode==='piano'?1:0)|(e.preference==='flat'?2:0)|(e.allowOmit?4:0);
+    const row=[e.title,frets,index,flags,e.chordKey];
+    if(e.mode==='piano'||JSON.stringify(guitarNotes(e.frets,e.tuning))!==JSON.stringify(e.notes))row.push(e.notes);
+    return row;
+  });
+  const bytes=new TextEncoder().encode(JSON.stringify([2,folderName(title),tunings,compact]));
+  let payload='j'+toBase64(bytes);
+  if(typeof CompressionStream==='function'){
+    const compressed=await boundedBytes(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate')));
+    if(compressed.length<bytes.length)payload='z'+toBase64(compressed);
+  }
+  const url=new URL(base);url.hash='p='+payload;
   if(url.href.length>MAX_SHARE_LENGTH)throw Error('Lien trop long. Sélectionnez moins d’accords ou utilisez la sauvegarde JSON.');
   return url.href;
 }
-export function readShare(hash){
-  const encoded=hash.startsWith('#partage=')?hash.slice(9):'';
+export async function readShare(hash){
+  const legacy=hash.startsWith('#partage='),format=hash.startsWith('#p=')?hash[3]:null;
+  const encoded=legacy?hash.slice(9):['j','z'].includes(format)?hash.slice(4):'';
   if(!encoded||encoded.length>MAX_SHARE_LENGTH||!/^[A-Za-z0-9_-]+$/.test(encoded))throw Error('Ce lien de partage est incomplet ou invalide.');
   try{
-    const bytes=Uint8Array.from(atob(encoded.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
+    let bytes=fromBase64(encoded);
+    if(format==='z'){
+      if(typeof DecompressionStream!=='function')throw Error('UNSUPPORTED_COMPRESSION');
+      bytes=await boundedBytes(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')));
+    }
     const data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
-    if(!Array.isArray(data)||data.length!==3||data[0]!==1||typeof data[1]!=='string'||!Array.isArray(data[2])||!data[2].length||data[2].length>MAX_CHORDS)throw Error();
-    const chords=data[2].map(row=>{
-      if(!Array.isArray(row)||row.length!==9||![0,1].includes(row[4])||![0,1].includes(row[6])||![0,1].includes(row[7])||typeof row[0]!=='string'||row[0].length>80||!(row[8]===null||typeof row[8]==='string'))throw Error();
-      return validateEntry({title:row[0],notes:row[1],tuning:row[2],frets:row[3],mode:row[4]?'piano':'guitar',tuningId:row[5],preference:row[6]?'flat':'sharp',allowOmit:!!row[7],chordKey:row[8]});
-    });
+    if(!Array.isArray(data)||typeof data[1]!=='string')throw Error();
+    let chords;
+    if(legacy){
+      if(data.length!==3||data[0]!==1||!Array.isArray(data[2])||!data[2].length||data[2].length>MAX_CHORDS)throw Error();
+      chords=data[2].map(row=>{
+        if(!Array.isArray(row)||row.length!==9||![0,1].includes(row[4])||![0,1].includes(row[6])||![0,1].includes(row[7])||typeof row[0]!=='string'||row[0].length>80||!(row[8]===null||typeof row[8]==='string'))throw Error();
+        return validateEntry({title:row[0],notes:row[1],tuning:row[2],frets:row[3],mode:row[4]?'piano':'guitar',tuningId:row[5],preference:row[6]?'flat':'sharp',allowOmit:!!row[7],chordKey:row[8]});
+      });
+    }else{
+      if(data.length!==4||data[0]!==2||!Array.isArray(data[2])||!data[2].length||data[2].length>MAX_CHORDS||!Array.isArray(data[3])||!data[3].length||data[3].length>MAX_CHORDS)throw Error();
+      const tunings=data[2].map(t=>{
+        if(typeof t==='string'){const known=TUNINGS.find(x=>x.id===t);if(!known)throw Error();return {id:t,notes:known.notes};}
+        if(!Array.isArray(t)||t.length!==6||!t.every(n=>Number.isInteger(n)&&n>=28&&n<=71))throw Error();
+        return {id:'custom',notes:t};
+      });
+      chords=data[3].map(row=>{
+        if(!Array.isArray(row)||![5,6].includes(row.length)||typeof row[0]!=='string'||row[0].length>80||typeof row[1]!=='string'||!/^[0-9a-o-]{6}$/.test(row[1])||!Number.isInteger(row[2])||!tunings[row[2]]||!Number.isInteger(row[3])||row[3]<0||row[3]>7||!(row[4]===null||(typeof row[4]==='string'&&row[4].length<=100)))throw Error();
+        const tuning=tunings[row[2]],frets=Array.from(row[1],f=>f==='-'?null:parseInt(f,36));
+        const mode=row[3]&1?'piano':'guitar';
+        if(mode==='piano'&&row.length!==6)throw Error();
+        return validateEntry({title:row[0],frets,tuning:tuning.notes,tuningId:tuning.id,notes:row.length===6?row[5]:guitarNotes(frets,tuning.notes),mode,preference:row[3]&2?'flat':'sharp',allowOmit:!!(row[3]&4),chordKey:row[4]});
+      });
+    }
     if(chords.some(e=>!e))throw Error();
     return {title:folderName(data[1]),chords};
-  }catch{throw Error('Ce lien de partage est incomplet ou invalide.');}
+  }catch(e){if(e.message==='UNSUPPORTED_COMPRESSION')throw Error('Utilisez un navigateur à jour pour ouvrir ce lien compressé.');throw Error('Ce lien de partage est incomplet ou invalide.');}
 }

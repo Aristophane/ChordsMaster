@@ -39,7 +39,9 @@ La recherche de position garantit les notes et une note par corde ; elle ne gara
 
 Les dossiers et accords sont enregistrés ensemble dans `chordsmaster.carnet.v2`. Le carnet v1 est lu automatiquement au premier usage et sa copie d'origine reste intacte. Les sauvegardes JSON v1 restent importables ; les nouvelles sauvegardes v2 incluent aussi les dossiers, même vides. Limites : 500 accords et 100 dossiers.
 
-Le partage n'utilise aucun serveur de stockage : le fragment `#partage=…` contient une copie UTF-8 des accords sélectionnés (notes exactes, accordage, position et interprétation). Le fragment n'est pas envoyé dans les requêtes HTTP. Toute personne disposant du lien peut le lire ; il n'y a ni mot de passe, ni expiration, ni révocation ou mise à jour à distance. Le carnet n'est modifié qu'après un clic sur « Ajouter au carnet ». Les liens sont limités à 12 000 caractères ; pour de grandes collections, partager plusieurs sélections ou exporter le JSON. Les données entrantes sont validées avant tout import, sans écraser les accords existants.
+Le partage n'utilise aucun serveur de stockage : le fragment `#p=…` contient une copie compacte des accords (notes exactes, accordage, position, titre et interprétation). Chaque accordage n'est stocké qu'une fois ; les notes de guitare sont recalculées depuis les cases, avec conservation explicite de leur ordre si nécessaire. Les données sont ensuite compressées avec DEFLATE via l'API native du navigateur, sans dépendance. Sans cette API, un lien compact non compressé est créé. Les anciens liens `#partage=…` restent lisibles. Le décodage limite la taille décompressée à 500 Ko avant de valider les accords.
+
+Le fragment n'est pas envoyé dans les requêtes HTTP. Toute personne disposant du lien peut le lire ; il n'y a ni mot de passe, ni expiration, ni révocation ou mise à jour à distance. Le carnet n'est modifié qu'après un clic sur « Ajouter au carnet ». Les liens sont limités à 12 000 caractères ; pour de grandes collections, partager plusieurs sélections ou exporter le JSON. Les données entrantes sont validées avant tout import, sans écraser les accords existants. Une URL de quelques caractères nécessiterait un service externe stockant les collections ; ce projet conserve un partage autonome.
 
 ## Publication GitHub Pages
 
@@ -57,6 +59,6 @@ npm test
 
 Tests du catalogue dans les douze fondamentales et ses renversements, orthographe, ambiguïtés, quintes omises, accordages, assignation des cordes, limites/transposition et structure PDF.
 
-Tests du carnet : migration v1/v2, dossiers et réorganisation filtrée, fusion sans écrasement, collisions d'identifiants, partage Unicode guitare/piano, liens malformés et limite de longueur.
+Tests du carnet : migration v1/v2, dossiers et réorganisation filtrée, fusion sans écrasement, collisions d'identifiants, partage Unicode guitare/piano, anciens liens, compression, ordre des notes, navigateurs sans API de compression, liens malformés, limite de longueur et décompression excessive.
 
 Références : [Open Music Theory : symboles](https://viva.pressbooks.pub/openmusictheory/chapter/chord-symbols/), [renversements](https://viva.pressbooks.pub/openmusictheory/chapter/inversion/), [Fender : accordages](https://www.fender.com/online-guitar-tuner/acoustic-guitar-tuning/).

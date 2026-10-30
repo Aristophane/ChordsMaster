@@ -7,8 +7,10 @@ const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&
 const STORAGE='chordsmaster.carnet.v2', LEGACY_STORAGE='chordsmaster.carnet.v1';
 const state={mode:'guitar',tuningId:'standard',tuning:[40,45,50,55,59,64],frets:[null,3,2,0,0,0],pianoNotes:[],preference:'sharp',french:true,allowOmit:true,chosenKey:null,transpose:0,range:0,showNotes:false,pianoLabels:true,saved:[],folders:[],folder:'all',saveFolder:'',checked:new Set()};
 let shared=null,sharedHash='',sharedChecked=new Set(),folderEdit=null;
+let creatingShare=false,sharedRequest=0;
 const currentNotebook=()=>({version:2,chords:state.saved,folders:state.folders});
 const filteredChords=()=>visibleChords(state.saved,state.folder);
+const isSharedLocation=()=>location.hash.startsWith('#partage=')||location.hash.startsWith('#p=');
 let result, chosen, audioContext, toastTimer, pendingDeletion;
 let storageUnreadable=false;
 const tuningLabel=()=>state.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===state.tuningId)?.name||'Personnalisé';
@@ -228,7 +230,7 @@ function renderLibrary(){
   $('library-empty-title').textContent=state.saved.length?'Aucun accord dans ce dossier.':'Aucun accord enregistré.';
   $('export-count').textContent=state.checked.size;
   $('export-pdf').disabled=$('move-folder').disabled=!state.checked.size;
-  $('share-button').disabled=!visible.length;
+  $('share-button').disabled=creatingShare||!visible.length;
   $('backup-button').disabled=!state.saved.length&&!state.folders.length;
   $('select-all').checked=!!visible.length&&state.checked.size===visible.length;
   $('select-all').indeterminate=state.checked.size>0&&state.checked.size<visible.length;
@@ -378,23 +380,41 @@ function moveSelection(target){
   state.saved.forEach(e=>{if(state.checked.has(e.id))e.folderId=target||null;});
   const stored=persist();renderLibrary();if(stored)notify(count+' accord'+(count>1?'s déplacés.':' déplacé.'));
 }
-function shareSelection(){
+async function shareSelection(){
+  if(creatingShare)return;
+  creatingShare=true;$('share-button').disabled=true;
   try{
     const title=state.folders.find(f=>f.id===state.folder)?.name||'';
     const visible=filteredChords(),selected=visible.filter(e=>state.checked.has(e.id));
-    $('share-url').value=createShareURL(location.href,selected.length?selected:visible,title);
-    copyShare();
+    const pendingURL=createShareURL(location.href,selected.length?selected:visible,title);
+    // Start the clipboard request inside the click, before async compression
+    // finishes, so browsers requiring transient user activation can accept it.
+    let copying=null;
+    if(navigator.clipboard?.write&&typeof ClipboardItem==='function'){
+      const text=pendingURL.then(url=>new Blob([url],{type:'text/plain'}));text.catch(()=>{});
+      try{copying=navigator.clipboard.write([new ClipboardItem({'text/plain':text})]).then(()=>true,()=>false);}catch{/* Try writeText below. */}
+    }
+    $('share-url').value=await pendingURL;
+    // Plain text also covers clipboard integrations that do not handle
+    // promised ClipboardItem data. The initial write remains a Safari fallback.
+    await copyShare(copying?await copying:false);
   }catch(e){notify(e.message,true);}
+  finally{creatingShare=false;$('share-button').disabled=!filteredChords().length;}
 }
-async function copyShare(){
-  try{await navigator.clipboard.writeText($('share-url').value);$('share-result').hidden=true;notify('Lien copié.');}
-  catch{$('share-result').hidden=false;$('share-url').focus();$('share-url').select();notify('Sélectionnez le lien, puis copiez-le avec Ctrl+C ou le menu de votre appareil.');}
+async function copyShare(fallbackCopied=false){
+  let copied=fallbackCopied===true;
+  try{await navigator.clipboard.writeText($('share-url').value);copied=true;}catch{/* Keep a confirmed ClipboardItem copy if user activation has expired. */}
+  if(copied){$('share-result').hidden=true;notify('Lien copié.');}
+  else{$('share-result').hidden=false;$('share-url').focus();$('share-url').select();notify('Sélectionnez le lien, puis copiez-le avec Ctrl+C ou le menu de votre appareil.');}
 }
-function openShared(){
-  if(sharedHash===location.hash){renderShared();return;}
-  sharedHash=location.hash;shared=null;sharedChecked.clear();
-  try{shared=readShare(location.hash);sharedChecked=new Set(shared.chords.map(e=>e.id));}
-  catch(e){$('shared-error').textContent=e.message;}
+async function openShared(){
+  const hash=location.hash;
+  if(sharedHash===hash){if(shared)renderShared();return;}
+  const request=++sharedRequest;
+  sharedHash=hash;shared=null;sharedChecked.clear();
+  $('shared-error').hidden=true;$('shared-controls').hidden=true;$('shared-grid').innerHTML='';$('shared-title').textContent='Accords partagés';
+  try{const incoming=await readShare(hash);if(request!==sharedRequest||location.hash!==hash)return;shared=incoming;sharedChecked=new Set(shared.chords.map(e=>e.id));}
+  catch(e){if(request!==sharedRequest||location.hash!==hash)return;$('shared-error').textContent=e.message;}
   $('shared-folder').innerHTML=folderOptions()+'<option value="_new">Nouveau dossier…</option>';
   const existing=shared?.title&&state.folders.find(f=>f.name.toLocaleLowerCase('fr')===shared.title.toLocaleLowerCase('fr'));
   $('shared-folder').value=existing?existing.id:shared?.title?'_new':'';
@@ -441,7 +461,7 @@ async function importJSON(file){
     const stored=persist();renderLibrary();if(stored)notify(merged.added.length+' accord'+(merged.added.length>1?'s importés.':' importé.'));
   }catch(e){notify(e.message||'Impossible de lire cette sauvegarde.',true);}finally{$('import-file').value='';}
 }
-function navigate(){const library=location.hash==='#carnet',sharing=location.hash.startsWith('#partage=');$('atelier-page').hidden=library||sharing;$('carnet-page').hidden=!library;$('partage-page').hidden=!sharing;document.querySelectorAll('[data-page]').forEach(a=>a.classList.toggle('active',!sharing&&a.dataset.page===(library?'carnet':'atelier')));if(library)renderLibrary();if(sharing)openShared();}
+function navigate(){const library=location.hash==='#carnet',sharing=isSharedLocation();$('atelier-page').hidden=library||sharing;$('carnet-page').hidden=!library;$('partage-page').hidden=!sharing;document.querySelectorAll('[data-page]').forEach(a=>a.classList.toggle('active',!sharing&&a.dataset.page===(library?'carnet':'atelier')));if(library)renderLibrary();if(sharing)openShared();}
 
 $('tuning-select').innerHTML=TUNINGS.map(t=>`<option value="${t.id}">${t.name} · ${t.notes.map(n=>noteName(n)).join(' ')}</option>`).join('')+'<option value="custom">Personnalisé…</option>';
 $('tuning-select').addEventListener('change',changeTuning);
@@ -505,5 +525,5 @@ $('export-pdf').addEventListener('click',exportPDF);
 $('backup-button').addEventListener('click',()=>download(new Blob([JSON.stringify({...currentNotebook(),exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),'ChordsMaster-sauvegarde.json'));
 $('import-button').addEventListener('click',()=>$('import-file').click());$('import-file').addEventListener('change',e=>importJSON(e.target.files[0]));
 window.addEventListener('hashchange',navigate);
-window.addEventListener('storage',e=>{if(e.key!==STORAGE)return;endLibraryDrag();readStorage();renderLibrary();if(location.hash.startsWith('#partage=')){sharedHash='';openShared();}});
+window.addEventListener('storage',e=>{if(e.key!==STORAGE)return;endLibraryDrag();readStorage();renderLibrary();if(isSharedLocation()){sharedHash='';openShared();}});
 readStorage();renderLibrary();update();navigate();
