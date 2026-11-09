@@ -5,6 +5,7 @@ import { readNotebook, mergeNotebook, visibleChords, reorderInFolder, folderName
 const $ = id => document.getElementById(id);
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const STORAGE='chordsmaster.carnet.v2', LEGACY_STORAGE='chordsmaster.carnet.v1';
+const GRID_STORAGE='chordsmaster.carnet.columns', MAX_GRID_COLUMNS=6, MIN_CARD_WIDTH=166;
 const state={mode:'guitar',tuningId:'standard',tuning:[40,45,50,55,59,64],frets:[null,3,2,0,0,0],pianoNotes:[],preference:'sharp',french:true,allowOmit:true,chosenKey:null,transpose:0,range:0,showNotes:false,pianoLabels:true,saved:[],folders:[],folder:'all',saveFolder:'',checked:new Set()};
 let shared=null,sharedHash='',sharedChecked=new Set(),folderEdit=null;
 let creatingShare=false,sharedRequest=0;
@@ -204,21 +205,64 @@ function saveChord(){
 function entryAnalysis(entry){const a=analyze(entry.notes,entry.preference,entry.allowOmit);return {a,c:a.candidates.find(c=>c.key===entry.chordKey)||a.candidates[0]||null};}
 function miniGuitar(entry,c){
   const playable=entry.frets.some(f=>f!==null);
-  if(!playable)return '<svg class="mini-guitar" viewBox="0 0 86 109" aria-label="Accord créé au piano"><path d="M5 25h76v52H5zM16 25v52m11-52v52m11-52v52m11-52v52m11-52v52m11-52v52" stroke="#c7c6b9"/><path d="M13 25v30h8V25m4 0v30h8V25m17 0v30h8V25m4 0v30h8V25" fill="#3d4138" stroke="none"/><text x="43" y="96" text-anchor="middle">PIANO</text></svg>';
+  if(!playable)return '<svg class="mini-guitar" viewBox="0 0 175 108" role="img" aria-label="Accord créé au piano"><g transform="translate(44 -5)"><path d="M5 25h76v52H5zM16 25v52m11-52v52m11-52v52m11-52v52m11-52v52m11-52v52" stroke="#c7c6b9"/><path d="M13 25v30h8V25m4 0v30h8V25m17 0v30h8V25m4 0v30h8V25" fill="#3d4138" stroke="none"/><text x="43" y="96" text-anchor="middle">PIANO</text></g></svg>';
   const used=entry.frets.filter(f=>f!==null&&f>0),min=used.length?Math.min(...used):1,max=used.length?Math.max(...used):4;
-  const start=max<=4?1:min,rows=Math.max(4,max-start+1),height=Math.max(112,rows*16),step=height/rows,top=30,left=35,width=110;
-  let svg=`<svg class="mini-guitar" viewBox="0 0 160 ${height+58}" role="img" aria-label="Diagramme de guitare, cases ${start} à ${start+rows-1}, position ${esc(entry.frets.map(f=>f===null?'muette':f).join(', '))}">`;
-  for(let s=0;s<6;s++)svg+=`<path class="diagram-string" d="M${left+s*22} ${top}v${height}"/>`;
-  for(let f=0;f<=rows;f++)svg+=`<path class="diagram-fret ${f===0&&start===1?'diagram-nut':''}" d="M${left} ${top+f*step}h${width}"/>`;
-  for(let f=0;f<rows;f++)svg+=`<text class="fret-number" x="18" y="${top+(f+.5)*step+4}" text-anchor="end">${start+f}</text>`;
-  entry.frets.forEach((f,s)=>{
-    const x=left+s*22,isRoot=f!==null&&c&&mod(entry.tuning[s]+f)===c.root;
-    if(f===null)svg+=`<text class="string-mute" x="${x}" y="19" text-anchor="middle">×</text>`;
-    else if(f===0)svg+=`<circle class="open-string ${isRoot?'root':''}" cx="${x}" cy="14" r="5"/>`;
-    else svg+=`<circle class="${isRoot?'root':''}" cx="${x}" cy="${top+(f-start+.5)*step}" r="${Math.min(8,step*.34)}"/>`;
-    svg+=`<text class="string-position" x="${x}" y="${top+height+23}" text-anchor="middle">${f===null?'×':f}</text>`;
-  });
+  const start=max<=4?1:Math.min(min,21),columns=Math.max(4,max-start+1);
+  const left=41,top=24,gap=14,height=5*gap,width=Math.max(108,columns*22),step=width/columns;
+  const size=left+width+26,position=[...entry.frets].reverse().map(f=>f===null?'muette':f).join(', ');
+  let svg=`<svg class="mini-guitar" viewBox="0 0 ${size} 108" style="--diagram-min-width:${Math.round(size*.75)}px" role="img" aria-label="Manche horizontal, cases ${start} à ${start+columns-1}. Cordes de l’aigu au grave : ${position}.">`;
+  for(let row=0;row<6;row++)svg+=`<path class="diagram-string" d="M${left} ${top+row*gap}h${width}"/>`;
+  for(let f=0;f<=columns;f++)svg+=`<path class="diagram-fret ${f===0&&start===1?'diagram-nut':''}" d="M${left+f*step} ${top}v${height}"/>`;
+  for(let f=0;f<columns;f++)svg+=`<text class="fret-number" x="${left+(f+.5)*step}" y="13" text-anchor="middle">${start+f}</text>`;
+  for(let s=5;s>=0;s--){
+    const f=entry.frets[s],y=top+(5-s)*gap,isRoot=f!==null&&c&&mod(entry.tuning[s]+f)===c.root;
+    svg+=`<text class="diagram-tuning" x="4" y="${y+3.5}">${esc(noteName(entry.tuning[s],entry.preference))}</text>`;
+    if(f===null)svg+=`<text class="string-mute" x="29" y="${y+4}" text-anchor="middle">×</text>`;
+    else if(f===0)svg+=`<circle class="open-string ${isRoot?'root':''}" cx="29" cy="${y}" r="4"/>`;
+    else svg+=`<circle class="${isRoot?'root':''}" cx="${left+(f-start+.5)*step}" cy="${y}" r="5.2"/>`;
+    svg+=`<text class="string-position" x="${left+width+14}" y="${y+3.5}" text-anchor="middle">${f===null?'×':f}</text>`;
+  }
   return svg+'</svg>';
+}
+
+const gridControls=[...document.querySelectorAll('[data-grid-controls]')];
+let preferredColumns=4;
+try{
+  const stored=Number(localStorage.getItem(GRID_STORAGE));
+  if(Number.isInteger(stored)&&stored>=1&&stored<=MAX_GRID_COLUMNS)preferredColumns=stored;
+}catch{/* Layout preferences are optional. */}
+function refreshGridLayout(control){
+  const grid=$(control.dataset.gridControls),width=grid.clientWidth;
+  if(!width)return;
+  const gap=parseFloat(getComputedStyle(grid).columnGap)||0;
+  const limit=Math.max(1,Math.min(MAX_GRID_COLUMNS,Math.floor((width+gap)/(MIN_CARD_WIDTH+gap))));
+  const columns=Math.min(preferredColumns,limit);
+  if(grid.dataset.columns!==String(columns)){
+    grid.dataset.columns=columns;
+    grid.style.setProperty('--library-columns',columns);
+    control.querySelector('output').textContent=`${columns} / ligne`;
+  }
+  control.querySelector('[data-grid-zoom="out"]').setAttribute('aria-disabled',String(columns>=limit));
+  control.querySelector('[data-grid-zoom="in"]').setAttribute('aria-disabled',String(columns<=1));
+  return columns;
+}
+const gridObserver=new ResizeObserver(entries=>{
+  for(const {target} of entries){
+    const control=gridControls.find(item=>item.dataset.gridControls===target.id);
+    if(control)refreshGridLayout(control);
+  }
+});
+for(const control of gridControls){
+  gridObserver.observe($(control.dataset.gridControls));
+  control.addEventListener('click',event=>{
+    const button=event.target.closest('[data-grid-zoom]');
+    if(!button||button.getAttribute('aria-disabled')==='true')return;
+    const columns=refreshGridLayout(control);
+    if(!columns||button.getAttribute('aria-disabled')==='true')return;
+    preferredColumns=columns+(button.dataset.gridZoom==='in'?-1:1);
+    try{localStorage.setItem(GRID_STORAGE,String(preferredColumns));}catch{/* Still apply zoom in this tab. */}
+    gridControls.forEach(refreshGridLayout);
+  });
 }
 function renderLibrary(){
   renderFolders();
@@ -290,6 +334,8 @@ $('library-grid').addEventListener('pointerdown',e=>{
   const handle=e.target.closest('[data-move]');
   if(e.pointerType==='touch'&&!handle)return;
   if(!handle&&e.target.closest('button,input,select,a,summary,details'))return;
+  const diagram=e.target.closest('.card-diagrams');
+  if(diagram&&diagram.scrollWidth>diagram.clientWidth)return;
   const rect=card.getBoundingClientRect();
   libraryDrag={card,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,x:e.clientX,y:e.clientY,offsetX:e.clientX-rect.left,offsetY:e.clientY-rect.top,rect,active:false,target:null};
   card.setPointerCapture(e.pointerId);
@@ -319,7 +365,7 @@ $('library-grid').addEventListener('keydown',e=>{
   if(e.key==='Escape'&&libraryDrag){e.preventDefault();endLibraryDrag();return;}
   const handle=e.target.closest('[data-move]');if(!handle)return;
   const visible=filteredChords(),index=visible.findIndex(entry=>entry.id===handle.dataset.move);
-  const columns=getComputedStyle($('library-grid')).gridTemplateColumns.split(' ').length;
+  const columns=Number($('library-grid').dataset.columns)||1;
   const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns,Home:-index,End:visible.length-1-index};
   if(!(e.key in offsets))return;
   e.preventDefault();
