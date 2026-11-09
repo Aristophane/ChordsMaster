@@ -1,7 +1,8 @@
 import { analyze, mod, noteName, chordLabel } from './music.js';
+import { fretInlayRows } from './fret-inlays.js';
 
 // Dependency-free, vector PDF. Built-in Type 1 fonts with explicit WinAnsi encoding.
-const colors={ink:'#302f29',muted:'#77776a',accent:'#a94f37',sage:'#718473',paper:'#f5f3ec',line:'#dfdfd4',soft:'#e6ebe1'};
+const colors={ink:'#302f29',muted:'#77776a',accent:'#a94f37',sage:'#718473',paper:'#f5f3ec',line:'#dfdfd4',soft:'#e6ebe1',inlay:'#a79e8b'};
 const num=n=>Number(n.toFixed(3));
 const rgb=hex=>[1,3,5].map(i=>num(parseInt(hex.slice(i,i+2),16)/255)).join(' ');
 const special={'œ':156,'Œ':140,'€':128,'•':149};
@@ -46,6 +47,10 @@ function guitar(p,entry,chord,x,top,width){
   for(let f=0;f<=count;f++){
     const nut=f===0&&start===1;
     p.line(left+f*step,y,left+f*step,y-h,nut?colors.ink:'#a8a798',nut?1.8:.55);
+  }
+  const inlayRadius=Math.min(gap*.13,step*.25);
+  for(let f=0;f<count;f++){
+    for(const row of fretInlayRows(start+f))p.circle(left+(f+.5)*step,y-row*gap,inlayRadius,colors.inlay);
   }
   // Preserve legibility for wide stretches: prefer the boundaries and played frets.
   const labels=step>=10?Array.from({length:count},(_,i)=>start+i):[...new Set([start,end,...used])];

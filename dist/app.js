@@ -1,5 +1,6 @@
 import { mod, TUNINGS, noteName, frenchName, chordLabel, analyze, guitarNotes, findFingering, transposeGuitar, intervalName } from './music.js';
-import { createChordPDF } from './pdf.js';
+import { createChordPDF } from './pdf.js?v=inserts-pdf';
+import { fretInlayRows } from './fret-inlays.js';
 import { readNotebook, mergeNotebook, visibleChords, reorderInFolder, folderName, chordSignature, createShareURL, readShare } from './notebook.js';
 
 const $ = id => document.getElementById(id);
@@ -92,7 +93,6 @@ function renderAnalysis(){
 function labelForMidi(midi,withOctave=false){
   return displayNote(midi,withOctave);
 }
-const fretInlayCount=fret=>fret===12||fret===24?2:[3,5,7,9,15,17,19,21].includes(fret)?1:0;
 function renderGuitar(){
   const start=state.range==='all'?1:Number(state.range)+1;
   const end=state.range==='all'?24:Number(state.range)+12;
@@ -112,7 +112,7 @@ function renderGuitar(){
     }
   }
   html+='<span></span><span></span><span></span>';
-  for(let f=start;f<=end;f++)html+=`<span class="fret-marker">${'<span></span>'.repeat(fretInlayCount(f))}</span>`;
+  for(let f=start;f<=end;f++)html+=`<span class="fret-marker">${'<span></span>'.repeat(fretInlayRows(f).length)}</span>`;
   const focused=document.activeElement;const focusString=focused?.dataset.string,focusFret=focused?.dataset.fret,focusMute=focused?.dataset.mute;
   board.innerHTML=html;
   if(focusString!==undefined)board.querySelector(`[data-string="${focusString}"][data-fret="${focusFret}"]`)?.focus({preventScroll:true});
@@ -218,9 +218,8 @@ function miniGuitar(entry,c){
   for(let f=0;f<=columns;f++)svg+=`<path class="diagram-fret ${f===0&&start===1?'diagram-nut':''}" d="M${left+f*step} ${top}v${height}"/>`;
   for(let f=0;f<columns;f++)svg+=`<text class="fret-number" x="${left+(f+.5)*step}" y="13" text-anchor="middle">${start+f}</text>`;
   for(let f=0;f<columns;f++){
-    const fret=start+f,count=fretInlayCount(fret),x=left+(f+.5)*step;
-    if(!count)continue;
-    const rows=count===2?[1.5,3.5]:[2.5];
+    const fret=start+f,rows=fretInlayRows(fret),x=left+(f+.5)*step;
+    if(!rows.length)continue;
     svg+=`<g class="diagram-inlay" data-fret="${fret}" aria-hidden="true">${rows.map(row=>`<circle cx="${x}" cy="${top+row*gap}" r="3"/>`).join('')}</g>`;
   }
   for(let s=5;s>=0;s--){
