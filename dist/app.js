@@ -94,6 +94,7 @@ function renderAnalysis(){
 function labelForMidi(midi,withOctave=false){
   return displayNote(midi,withOctave);
 }
+const fretInlayCount=fret=>fret===12||fret===24?2:[3,5,7,9,15,17,19,21].includes(fret)?1:0;
 function renderGuitar(){
   const start=state.range==='all'?1:Number(state.range)+1;
   const end=state.range==='all'?24:Number(state.range)+12;
@@ -113,7 +114,7 @@ function renderGuitar(){
     }
   }
   html+='<span></span><span></span><span></span>';
-  for(let f=start;f<=end;f++)html+=`<span class="fret-marker">${[3,5,7,9,15,17,19,21].includes(f)?'<span></span>':f===12||f===24?'<span></span><span></span>':''}</span>`;
+  for(let f=start;f<=end;f++)html+=`<span class="fret-marker">${'<span></span>'.repeat(fretInlayCount(f))}</span>`;
   const focused=document.activeElement;const focusString=focused?.dataset.string,focusFret=focused?.dataset.fret,focusMute=focused?.dataset.mute;
   board.innerHTML=html;
   if(focusString!==undefined)board.querySelector(`[data-string="${focusString}"][data-fret="${focusFret}"]`)?.focus({preventScroll:true});
@@ -218,12 +219,18 @@ function miniGuitar(entry,c){
   for(let row=0;row<6;row++)svg+=`<path class="diagram-string" d="M${left} ${top+row*gap}h${width}"/>`;
   for(let f=0;f<=columns;f++)svg+=`<path class="diagram-fret ${f===0&&start===1?'diagram-nut':''}" d="M${left+f*step} ${top}v${height}"/>`;
   for(let f=0;f<columns;f++)svg+=`<text class="fret-number" x="${left+(f+.5)*step}" y="13" text-anchor="middle">${start+f}</text>`;
+  for(let f=0;f<columns;f++){
+    const fret=start+f,count=fretInlayCount(fret),x=left+(f+.5)*step;
+    if(!count)continue;
+    const rows=count===2?[1.5,3.5]:[2.5];
+    svg+=`<g class="diagram-inlay" data-fret="${fret}" aria-hidden="true">${rows.map(row=>`<circle cx="${x}" cy="${top+row*gap}" r="3"/>`).join('')}</g>`;
+  }
   for(let s=5;s>=0;s--){
     const f=entry.frets[s],y=top+(5-s)*gap,isRoot=f!==null&&c&&mod(entry.tuning[s]+f)===c.root;
     svg+=`<text class="diagram-tuning" x="4" y="${y+3.5}">${esc(noteName(entry.tuning[s],entry.preference))}</text>`;
     if(f===null)svg+=`<text class="string-mute" x="29" y="${y+4}" text-anchor="middle">×</text>`;
-    else if(f===0)svg+=`<circle class="open-string${isRoot?' root':''}" cx="29" cy="${y}" r="4.2"/>`;
-    else svg+=`<circle class="fret-dot${isRoot?' root':''}" cx="${left+(f-start+.5)*step}" cy="${y}" r="6"/>`;
+    else if(f===0)svg+=`<circle class="open-string${isRoot?' root':''}" cx="29" cy="${y}" r="4"/>`;
+    else svg+=`<circle class="fret-dot${isRoot?' root':''}" cx="${left+(f-start+.5)*step}" cy="${y}" r="5.2"/>`;
     svg+=`<text class="string-position" x="${left+width+14}" y="${y+3.5}" text-anchor="middle">${f===null?'×':f}</text>`;
   }
   return svg+'</svg>';

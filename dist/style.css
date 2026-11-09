@@ -35,9 +35,8 @@
 .mini-guitar .fret-number,.mini-guitar .diagram-tuning{font-size:10px;fill:var(--muted)}
 .mini-guitar .string-mute{font-size:14px;fill:var(--ink)}
 .mini-guitar .string-position{font-size:10px;font-weight:500}
-.mini-guitar .fret-dot{fill:#506b56;stroke:var(--surface);stroke-width:1.35}
-.mini-guitar .fret-dot.root{fill:var(--accent)}
-.mini-guitar circle.open-string{fill:none;stroke:#506b56;stroke-width:2.3}
+.mini-guitar .diagram-inlay circle{fill:#a79e8b;stroke:none}
+.mini-guitar circle.open-string{fill:none;stroke:var(--sage);stroke-width:2}
 .mini-guitar circle.open-string.root{fill:none;stroke:var(--accent)}
 .saved-details{border-top:1px solid var(--line);padding-top:4px;font-size:9px;color:var(--muted);cursor:default}
 .saved-details summary{cursor:pointer}
