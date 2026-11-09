@@ -12,6 +12,8 @@ let creatingShare=false,sharedRequest=0;
 const currentNotebook=()=>({version:2,chords:state.saved,folders:state.folders});
 const filteredChords=()=>visibleChords(state.saved,state.folder);
 const isSharedLocation=()=>location.hash.startsWith('#partage=')||location.hash.startsWith('#p=');
+const notebookHref=id=>id==='all'?'#carnet/tous':id===''?'#carnet/sans-dossier':`#carnet/dossier/${encodeURIComponent(JSON.stringify(id))}`;
+let currentRoute=null;
 let result, chosen, audioContext, toastTimer, pendingDeletion;
 let storageUnreadable=false;
 const tuningLabel=()=>state.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===state.tuningId)?.name||'Personnalisé';
@@ -196,7 +198,7 @@ function saveChord(){
   if(state.saved.length>=500){notify('Le carnet contient déjà 500 accords. Exportez-le avant d’en ajouter.',true);return;}
   const entry={id:crypto.randomUUID(),title:chosen?frenchName(chosen.rootName)+' '+chosen.title:result.kind==='single'?displayNote(result.notes[0]):result.kind==='interval'?intervalName(result.notes):'Notes libres',notes:notes(),mode:state.mode,tuningId:state.tuningId,tuning:[...state.tuning],frets:state.mode==='guitar'?[...state.frets]:findFingering(notes(),state.tuning,state.frets)||Array(6).fill(null),chordKey:chosen?.key||null,preference:state.preference,allowOmit:state.allowOmit,createdAt:new Date().toISOString(),folderId:state.saveFolder||null};
   const signature=e=>JSON.stringify([e.mode,e.tuning,[...e.notes].sort((a,b)=>a-b),e.frets,e.chordKey]);
-  if(state.saved.some(e=>e.folderId===entry.folderId&&signature(e)===signature(entry))){notify('Cet accord et cette position sont déjà dans ce dossier.');return;}
+  if(state.saved.some(e=>e.folderId===entry.folderId&&signature(e)===signature(entry))){notify('Cet accord et cette position sont déjà dans ce carnet.');return;}
   state.folder=state.saveFolder;
   state.saved.unshift(entry);state.checked.add(entry.id);
   const stored=persist();renderLibrary();update();
@@ -264,18 +266,36 @@ for(const control of gridControls){
     gridControls.forEach(refreshGridLayout);
   });
 }
+function renderBookshelf(){
+  const counts=new Map();
+  for(const entry of state.saved){const id=entry.folderId||'';counts.set(id,(counts.get(id)||0)+1);}
+  const books=counts.has('')?[...state.folders,{id:'',name:'Sans dossier'}]:state.folders;
+  const colors=['sauge','argile','ardoise','prune','chataigne'];
+  $('bookshelf-grid').innerHTML=books.map(book=>{
+    const number=counts.get(book.id)||0,count=`${number} accord${number>1?'s':''}`;
+    let color=0;for(const char of book.id)color=(Math.imul(31,color)+char.codePointAt(0))>>>0;
+    const tone=book.id?colors[color%colors.length]:'kraft';
+    const length=book.name.length>42?'long':book.name.length>23?'medium':'short';
+    return `<li><a class="notebook-link" href="${esc(notebookHref(book.id))}"><span class="notebook-object"><span class="notebook-cover" data-cover="${tone}"><span class="notebook-label"><span class="notebook-name" data-length="${length}">${esc(book.name)}</span></span></span></span><span class="notebook-count">${count}</span></a></li>`;
+  }).join('');
+  $('bookshelf-empty').hidden=books.length>0;
+  $('bookshelf-total').textContent=`(${state.saved.length})`;
+}
 function renderLibrary(){
   renderFolders();
-  const visible=filteredChords();
   $('saved-count').textContent=state.saved.length;
+  $('backup-button').disabled=!state.saved.length&&!state.folders.length;
+  if($('carnet-page').hidden)return;
+  if(!$('bookshelf-view').hidden){renderBookshelf();return;}
+  const visible=filteredChords();
+  $('notebook-title').textContent=state.folder==='all'?'Tous les accords':state.folders.find(f=>f.id===state.folder)?.name||'Sans dossier';
   state.checked=new Set([...state.checked].filter(id=>visible.some(e=>e.id===id)));
   $('library-count').textContent=visible.length+' accord'+(visible.length>1?'s':'');
   $('library-empty').hidden=visible.length>0;
-  $('library-empty-title').textContent=state.saved.length?'Aucun accord dans ce dossier.':'Aucun accord enregistré.';
+  $('library-empty-title').textContent=state.folder==='all'?'Aucun accord enregistré.':'Aucun accord dans ce carnet.';
   $('export-count').textContent=state.checked.size;
   $('export-pdf').disabled=$('move-folder').disabled=!state.checked.size;
   $('share-button').disabled=creatingShare||!visible.length;
-  $('backup-button').disabled=!state.saved.length&&!state.folders.length;
   $('select-all').checked=!!visible.length&&state.checked.size===visible.length;
   $('select-all').indeterminate=state.checked.size>0&&state.checked.size<visible.length;
   $('select-all').disabled=!visible.length;
@@ -397,28 +417,32 @@ function renderFolders(){
 }
 function editFolder(rename=false){
   folderEdit=rename?state.folder:null;
+  $(rename?'notebook-form-slot':'bookshelf-form-slot').append($('folder-form'));
   $('folder-form').hidden=false;$('folder-error').textContent='';
   $('folder-name').value=rename?state.folders.find(f=>f.id===folderEdit)?.name||'':'';
   $('folder-name').focus();
 }
 function commitFolder(e){
   e.preventDefault();const name=folderName($('folder-name').value);
-  if(!name){$('folder-error').textContent='Indiquez un nom de dossier.';return;}
-  if(state.folders.some(f=>f.id!==folderEdit&&f.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr'))){$('folder-error').textContent='Un dossier porte déjà ce nom.';return;}
-  if(!folderEdit&&state.folders.length>=100){$('folder-error').textContent='Le carnet contient déjà 100 dossiers.';return;}
-  if(folderEdit){const folder=state.folders.find(f=>f.id===folderEdit);if(!folder){$('folder-error').textContent='Ce dossier a été supprimé dans un autre onglet.';return;}folder.name=name;}
-  else{const id=crypto.randomUUID();state.folders.push({id,name});state.folder=id;state.saveFolder=id;state.checked.clear();}
-  const stored=persist();$('folder-form').hidden=true;renderLibrary();if(stored)notify(folderEdit?'Dossier renommé.':'Dossier créé.');
-  $('folder-filter').focus();
+  if(!name){$('folder-error').textContent='Indiquez un nom de carnet.';return;}
+  if(state.folders.some(f=>f.id!==folderEdit&&f.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr'))){$('folder-error').textContent='Un carnet porte déjà ce nom.';return;}
+  if(!folderEdit&&state.folders.length>=100){$('folder-error').textContent='La bibliothèque contient déjà 100 carnets.';return;}
+  let created=null;
+  if(folderEdit){const folder=state.folders.find(f=>f.id===folderEdit);if(!folder){$('folder-error').textContent='Ce carnet a été supprimé dans un autre onglet.';return;}folder.name=name;}
+  else{created=crypto.randomUUID();state.folders.push({id:created,name});state.saveFolder=created;}
+  const stored=persist();$('folder-form').hidden=true;renderLibrary();if(stored)notify(folderEdit?'Carnet renommé.':'Carnet créé.');
+  if(created)[...$('bookshelf-grid').querySelectorAll('a')].find(a=>a.getAttribute('href')===notebookHref(created))?.focus();
+  else $('rename-folder').focus();
 }
+function cancelFolderEdit(){$('folder-form').hidden=true;$(folderEdit?'rename-folder':'new-folder').focus();}
 function removeFolder(){
   const folder=state.folders.find(f=>f.id===state.folder);if(!folder)return;
-  if(!confirm(`Supprimer le dossier « ${folder.name} » ? Ses accords seront conservés dans « Sans dossier ».`))return;
+  if(!confirm(`Supprimer le carnet « ${folder.name} » ? Ses accords seront conservés dans « Sans dossier ».`))return;
   state.folders=state.folders.filter(f=>f.id!==folder.id);
   state.saved.forEach(e=>{if(e.folderId===folder.id)e.folderId=null;});
   if(pendingDeletion?.entry.folderId===folder.id)pendingDeletion.entry.folderId=null;
   state.folder='';state.saveFolder='';state.checked.clear();$('folder-form').hidden=true;
-  const stored=persist();renderLibrary();if(stored)notify('Dossier supprimé. Ses accords sont dans « Sans dossier ».');
+  const stored=persist();location.hash='#carnet';if(stored)notify('Carnet supprimé. Ses accords sont dans « Sans dossier ».');
 }
 function moveSelection(target){
   if(target==='_choose'||(target&&!state.folders.some(f=>f.id===target)))return;
@@ -461,7 +485,7 @@ async function openShared(){
   $('shared-error').hidden=true;$('shared-controls').hidden=true;$('shared-grid').innerHTML='';$('shared-title').textContent='Accords partagés';
   try{const incoming=await readShare(hash);if(request!==sharedRequest||location.hash!==hash)return;shared=incoming;sharedChecked=new Set(shared.chords.map(e=>e.id));}
   catch(e){if(request!==sharedRequest||location.hash!==hash)return;$('shared-error').textContent=e.message;}
-  $('shared-folder').innerHTML=folderOptions()+'<option value="_new">Nouveau dossier…</option>';
+  $('shared-folder').innerHTML=folderOptions()+'<option value="_new">Nouveau carnet…</option>';
   const existing=shared?.title&&state.folders.find(f=>f.name.toLocaleLowerCase('fr')===shared.title.toLocaleLowerCase('fr'));
   $('shared-folder').value=existing?existing.id:shared?.title?'_new':'';
   $('shared-folder-name').value=shared?.title||'';updateSharedFolder();renderShared();
@@ -481,18 +505,18 @@ function importShared(){
   try{
     let target=$('shared-folder').value,newFolder=null;
     if(target==='_new'){
-      const name=folderName($('shared-folder-name').value);if(!name)throw Error('Indiquez le nom du nouveau dossier.');
+      const name=folderName($('shared-folder-name').value);if(!name)throw Error('Indiquez le nom du nouveau carnet.');
       const existing=state.folders.find(f=>f.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr'));
       if(existing)target=existing.id;
-      else{if(state.folders.length>=100)throw Error('Le carnet contient déjà 100 dossiers.');newFolder={id:crypto.randomUUID(),name};target=newFolder.id;}
-    }else if(target&&!state.folders.some(f=>f.id===target))throw Error('Ce dossier n’existe plus. Choisissez un autre dossier.');
+      else{if(state.folders.length>=100)throw Error('La bibliothèque contient déjà 100 carnets.');newFolder={id:crypto.randomUUID(),name};target=newFolder.id;}
+    }else if(target&&!state.folders.some(f=>f.id===target))throw Error('Ce carnet n’existe plus. Choisissez un autre carnet.');
     const signatures=new Set(state.saved.filter(e=>(e.folderId||'')===target).map(chordSignature));
     const incoming=shared.chords.filter(e=>sharedChecked.has(e.id)).filter(e=>{const key=chordSignature(e);if(signatures.has(key))return false;signatures.add(key);return true;}).map(e=>({...e,id:crypto.randomUUID(),folderId:target||null,createdAt:new Date().toISOString()}));
     if(state.saved.length+incoming.length>500)throw Error('Le carnet ne peut pas dépasser 500 accords.');
-    if(!incoming.length){notify('Ces accords sont déjà dans ce dossier.');return;}
+    if(!incoming.length){notify('Ces accords sont déjà dans ce carnet.');return;}
     if(newFolder)state.folders.push(newFolder);
     state.saved.unshift(...incoming);state.folder=target;state.saveFolder=target;state.checked=new Set(incoming.map(e=>e.id));
-    const stored=persist();renderLibrary();location.hash='carnet';
+    const stored=persist();location.hash=notebookHref(target);
     if(stored)notify(incoming.length+' accord'+(incoming.length>1?'s ajoutés au carnet.':' ajouté au carnet.'));
   }catch(e){notify(e.message,true);}
 }
@@ -507,7 +531,33 @@ async function importJSON(file){
     const stored=persist();renderLibrary();if(stored)notify(merged.added.length+' accord'+(merged.added.length>1?'s importés.':' importé.'));
   }catch(e){notify(e.message||'Impossible de lire cette sauvegarde.',true);}finally{$('import-file').value='';}
 }
-function navigate(){const library=location.hash==='#carnet',sharing=isSharedLocation();$('atelier-page').hidden=library||sharing;$('carnet-page').hidden=!library;$('partage-page').hidden=!sharing;document.querySelectorAll('[data-page]').forEach(a=>a.classList.toggle('active',!sharing&&a.dataset.page===(library?'carnet':'atelier')));if(library)renderLibrary();if(sharing)openShared();}
+function notebookAt(hash){
+  if(hash===notebookHref('all'))return 'all';
+  if(hash===notebookHref(''))return '';
+  return state.folders.find(f=>notebookHref(f.id)===hash)?.id??null;
+}
+function navigate(){
+  let hash=location.hash;
+  const library=hash==='#carnet'||hash.startsWith('#carnet/'),sharing=isSharedLocation();
+  const folder=library?notebookAt(hash):null;
+  if(library&&folder===null&&hash!=='#carnet'){hash='#carnet';history.replaceState(null,'',hash);}
+  const changed=currentRoute!==hash,focusPage=changed&&currentRoute!==null;
+  currentRoute=hash;
+  if(changed){$('folder-form').hidden=true;$('share-result').hidden=true;}
+  if(folder!==null){
+    if(state.folder!==folder)state.checked.clear();
+    state.folder=folder;
+    if(folder!=='all')state.saveFolder=folder;
+  }
+  $('atelier-page').hidden=library||sharing;$('carnet-page').hidden=!library;$('partage-page').hidden=!sharing;
+  $('bookshelf-view').hidden=folder!==null;$('notebook-view').hidden=folder===null;
+  document.querySelectorAll('[data-page]').forEach(a=>{
+    const active=!sharing&&a.dataset.page===(library?'carnet':'atelier');
+    a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
+  });
+  renderLibrary();if(sharing)openShared();
+  if(focusPage&&library){window.scrollTo(0,0);$(folder===null?'bookshelf-title':'notebook-title').focus({preventScroll:true});}
+}
 
 $('tuning-select').innerHTML=TUNINGS.map(t=>`<option value="${t.id}">${t.name} · ${t.notes.map(n=>noteName(n)).join(' ')}</option>`).join('')+'<option value="custom">Personnalisé…</option>';
 $('tuning-select').addEventListener('change',changeTuning);
@@ -556,11 +606,11 @@ $('library-grid').addEventListener('input',e=>{
 });
 $('library-grid').addEventListener('click',e=>{const load=e.target.closest('[data-load]'),play=e.target.closest('[data-play]'),del=e.target.closest('[data-delete]');if(load)loadChord(state.saved.find(s=>s.id===load.dataset.load));else if(play)playChord(state.saved.find(s=>s.id===play.dataset.play).notes);else if(del)deleteEntry(del.dataset.delete);});
 $('select-all').addEventListener('change',e=>{state.checked=e.target.checked?new Set(filteredChords().map(s=>s.id)):new Set();renderLibrary();});
-$('folder-filter').addEventListener('change',e=>{state.folder=e.target.value;if(state.folder!=='all')state.saveFolder=state.folder;state.checked.clear();$('folder-form').hidden=true;$('share-result').hidden=true;renderLibrary();});
+$('folder-filter').addEventListener('change',e=>{location.hash=notebookHref(e.target.value);});
 $('save-folder').addEventListener('change',e=>{state.saveFolder=e.target.value;});
 $('new-folder').addEventListener('click',()=>editFolder());$('rename-folder').addEventListener('click',()=>editFolder(true));
-$('folder-form').addEventListener('submit',commitFolder);$('cancel-folder').addEventListener('click',()=>{$('folder-form').hidden=true;$('new-folder').focus();});
-$('folder-name').addEventListener('keydown',e=>{if(e.key==='Escape'){$('folder-form').hidden=true;$('new-folder').focus();}});
+$('folder-form').addEventListener('submit',commitFolder);$('cancel-folder').addEventListener('click',cancelFolderEdit);
+$('folder-name').addEventListener('keydown',e=>{if(e.key==='Escape')cancelFolderEdit();});
 $('delete-folder').addEventListener('click',removeFolder);$('move-folder').addEventListener('change',e=>moveSelection(e.target.value));
 $('share-button').addEventListener('click',shareSelection);$('copy-share').addEventListener('click',copyShare);$('close-share').addEventListener('click',()=>{$('share-result').hidden=true;$('share-button').focus();});
 $('shared-folder').addEventListener('change',updateSharedFolder);$('import-shared').addEventListener('click',importShared);
@@ -571,5 +621,5 @@ $('export-pdf').addEventListener('click',exportPDF);
 $('backup-button').addEventListener('click',()=>download(new Blob([JSON.stringify({...currentNotebook(),exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),'ChordsMaster-sauvegarde.json'));
 $('import-button').addEventListener('click',()=>$('import-file').click());$('import-file').addEventListener('change',e=>importJSON(e.target.files[0]));
 window.addEventListener('hashchange',navigate);
-window.addEventListener('storage',e=>{if(e.key!==STORAGE)return;endLibraryDrag();readStorage();renderLibrary();if(isSharedLocation()){sharedHash='';openShared();}});
-readStorage();renderLibrary();update();navigate();
+window.addEventListener('storage',e=>{if(e.key!==STORAGE)return;endLibraryDrag();readStorage();if(isSharedLocation())sharedHash='';navigate();});
+readStorage();update();navigate();
