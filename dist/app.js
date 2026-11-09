@@ -14,6 +14,8 @@ const filteredChords=()=>visibleChords(state.saved,state.folder);
 const isSharedLocation=()=>location.hash.startsWith('#partage=')||location.hash.startsWith('#p=');
 const notebookHref=id=>id==='all'?'#carnet/tous':id===''?'#carnet/sans-dossier':`#carnet/dossier/${encodeURIComponent(JSON.stringify(id))}`;
 let currentRoute=null;
+let openingNotebook=null;
+const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 let result, chosen, audioContext, toastTimer, pendingDeletion;
 let storageUnreadable=false;
 const tuningLabel=()=>state.tuningId==='custom'?'Personnalisé':TUNINGS.find(t=>t.id===state.tuningId)?.name||'Personnalisé';
@@ -220,8 +222,8 @@ function miniGuitar(entry,c){
     const f=entry.frets[s],y=top+(5-s)*gap,isRoot=f!==null&&c&&mod(entry.tuning[s]+f)===c.root;
     svg+=`<text class="diagram-tuning" x="4" y="${y+3.5}">${esc(noteName(entry.tuning[s],entry.preference))}</text>`;
     if(f===null)svg+=`<text class="string-mute" x="29" y="${y+4}" text-anchor="middle">×</text>`;
-    else if(f===0)svg+=`<circle class="open-string ${isRoot?'root':''}" cx="29" cy="${y}" r="4"/>`;
-    else svg+=`<circle class="${isRoot?'root':''}" cx="${left+(f-start+.5)*step}" cy="${y}" r="5.2"/>`;
+    else if(f===0)svg+=`<circle class="open-string${isRoot?' root':''}" cx="29" cy="${y}" r="4.2"/>`;
+    else svg+=`<circle class="fret-dot${isRoot?' root':''}" cx="${left+(f-start+.5)*step}" cy="${y}" r="6"/>`;
     svg+=`<text class="string-position" x="${left+width+14}" y="${y+3.5}" text-anchor="middle">${f===null?'×':f}</text>`;
   }
   return svg+'</svg>';
@@ -276,7 +278,7 @@ function renderBookshelf(){
     let color=0;for(const char of book.id)color=(Math.imul(31,color)+char.codePointAt(0))>>>0;
     const tone=book.id?colors[color%colors.length]:'kraft';
     const length=book.name.length>42?'long':book.name.length>23?'medium':'short';
-    return `<li><a class="notebook-link" href="${esc(notebookHref(book.id))}"><span class="notebook-object"><span class="notebook-cover" data-cover="${tone}"><span class="notebook-label"><span class="notebook-name" data-length="${length}">${esc(book.name)}</span></span></span></span><span class="notebook-count">${count}</span></a></li>`;
+    return `<li><a class="notebook-link" href="${esc(notebookHref(book.id))}"><span class="notebook-object"><span class="notebook-page" aria-hidden="true"></span><span class="notebook-leaf"><span class="notebook-cover" data-cover="${tone}"><span class="notebook-label"><span class="notebook-name" data-length="${length}">${esc(book.name)}</span></span></span><span class="notebook-inside" aria-hidden="true"></span></span></span><span class="notebook-count">${count}</span></a></li>`;
   }).join('');
   $('bookshelf-empty').hidden=books.length>0;
   $('bookshelf-total').textContent=`(${state.saved.length})`;
@@ -536,6 +538,29 @@ function notebookAt(hash){
   if(hash===notebookHref(''))return '';
   return state.folders.find(f=>notebookHref(f.id)===hash)?.id??null;
 }
+function cancelNotebookOpening(){
+  if(!openingNotebook)return;
+  const {link,leaf,finish,timer}=openingNotebook;
+  openingNotebook=null;
+  clearTimeout(timer);leaf.removeEventListener('animationend',finish);link.classList.remove('is-opening');
+}
+$('bookshelf-grid').addEventListener('click',event=>{
+  const link=event.target.closest('.notebook-link');
+  if(!link||event.defaultPrevented||event.button!==0||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||reducedMotion.matches)return;
+  event.preventDefault();
+  if(openingNotebook?.link===link)return;
+  cancelNotebookOpening();
+  const source=location.hash,destination=link.getAttribute('href'),leaf=link.querySelector('.notebook-leaf');
+  const finish=event=>{
+    if(event&&(event.target!==leaf||event.animationName!=='open-notebook'))return;
+    if(openingNotebook?.link!==link)return;
+    if(location.hash===source&&notebookAt(destination)!==null){clearTimeout(openingNotebook.timer);location.hash=destination;}
+    else cancelNotebookOpening();
+  };
+  openingNotebook={link,leaf,finish,timer:setTimeout(finish,430)};
+  leaf.addEventListener('animationend',finish);link.classList.add('is-opening');
+});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')cancelNotebookOpening();});
 function navigate(){
   let hash=location.hash;
   const library=hash==='#carnet'||hash.startsWith('#carnet/'),sharing=isSharedLocation();
@@ -543,7 +568,7 @@ function navigate(){
   if(library&&folder===null&&hash!=='#carnet'){hash='#carnet';history.replaceState(null,'',hash);}
   const changed=currentRoute!==hash,focusPage=changed&&currentRoute!==null;
   currentRoute=hash;
-  if(changed){$('folder-form').hidden=true;$('share-result').hidden=true;}
+  if(changed){cancelNotebookOpening();$('folder-form').hidden=true;$('share-result').hidden=true;}
   if(folder!==null){
     if(state.folder!==folder)state.checked.clear();
     state.folder=folder;
