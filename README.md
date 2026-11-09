@@ -26,7 +26,7 @@ Ouvrir l'adresse affichée, par défaut `http://localhost:4173`. Les fichiers de
 - Carnet compact, manches horizontaux et détails repliables. Les boutons − et + affichent davantage ou moins d'accords par ligne, selon la largeur disponible. La préférence est conservée dans le navigateur et s'applique aussi aux accords partagés. Réorganisation par glisser-déposer ou flèches depuis la poignée ; l'ordre est sauvegardé et utilisé dans le PDF.
 - Dossiers : création, renommage, filtre, choix à l'enregistrement et déplacement d'une sélection. Supprimer un dossier conserve ses accords dans « Sans dossier ».
 - Liens de partage : « Partager » copie directement le lien de la sélection. Sans sélection, tous les accords affichés sont partagés (le dossier ouvert ou tout le carnet). Si le navigateur refuse la copie, le lien est affiché pour une copie manuelle. Le destinataire prévisualise les positions, peut les écouter ou les ouvrir, puis importe sa sélection dans un dossier de son carnet. Les doublons identiques dans le dossier choisi sont ignorés.
-- Sélection et téléchargement PDF vectoriel paginé, avec manche, clavier, notes et intervalles.
+- Export PDF vectoriel de la sélection : manches horizontaux, clavier, notes et intervalles, avec le nombre d’accords par ligne visible dans le carnet. Format A4 paysage à partir de quatre colonnes.
 - Interface responsive, navigation clavier, états accessibles et respect des mouvements réduits.
 
 ## Théorie et limites explicites

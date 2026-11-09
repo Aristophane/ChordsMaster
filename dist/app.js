@@ -497,7 +497,7 @@ function importShared(){
   }catch(e){notify(e.message,true);}
 }
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
-function exportPDF(){try{const entries=state.saved.filter(e=>state.checked.has(e.id));if(!entries.length)return;download(new Blob([createChordPDF(entries)],{type:'application/pdf'}),'ChordsMaster-carnet.pdf');notify('Votre fiche PDF est prête.');}catch(error){console.error(error);notify('Le PDF n’a pas pu être généré. Votre carnet reste disponible.',true);}}
+function exportPDF(){try{const entries=state.saved.filter(e=>state.checked.has(e.id));if(!entries.length)return;const columns=Number($('library-grid').dataset.columns)||preferredColumns;download(new Blob([createChordPDF(entries,{columns})],{type:'application/pdf'}),'ChordsMaster-carnet.pdf');notify('Votre fiche PDF est prête.');}catch(error){console.error(error);notify('Le PDF n’a pas pu être généré. Votre carnet reste disponible.',true);}}
 async function importJSON(file){
   if(!file)return;
   try{

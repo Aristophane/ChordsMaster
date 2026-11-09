@@ -86,9 +86,28 @@ test('Transposition is exact, reversible when possible, and fails atomically at 
 test('PDF is multi-page, escaped, searchable, and has valid xref offsets',()=>{
   const entry={notes:[48,52,55,59],frets:[null,3,2,0,0,null],tuning:standard,mode:'guitar',title:'Do majeur septième (essai)',preference:'sharp',allowOmit:true,chordKey:'0:maj7:full'};
   const pdf=new TextDecoder().decode(createChordPDF(Array(7).fill(entry)));
-  assert(pdf.startsWith('%PDF-1.4'));assert(pdf.includes('/Count 3'));
+  assert(pdf.startsWith('%PDF-1.4'));assert(Number(pdf.match(/\/Count (\d+)/)[1])>1);
   const offset=Number(pdf.match(/startxref\n(\d+)/)[1]);assert.equal(pdf.slice(offset,offset+4),'xref');
   const rows=pdf.slice(offset).split('\n').slice(3).filter(l=>/^\d{10} 00000 n/.test(l));
   rows.forEach((r,i)=>assert(pdf.slice(Number(r.slice(0,10))).startsWith(`${i+1} 0 obj`)));
   assert.equal(pdfText('Cdim7 B♭♭ é (x)'),'(Cdim7 Bbb \\351 \\(x\\))');
+});
+test('PDF keeps the chosen column count and chord order across complete and partial rows',()=>{
+  const entry={notes:[48,52,55,59,64],frets:[null,3,2,0,0,0],tuning:standard,mode:'guitar',preference:'sharp',allowOmit:true,chordKey:'0:maj7:full'};
+  const entries=Array.from({length:19},(_,i)=>({...entry,title:`Accord ${i+1}`}));
+  for(let columns=1;columns<=6;columns++){
+    const pdf=new TextDecoder().decode(createChordPDF(entries,{columns}));
+    const rows=[];
+    for(const [,page] of pdf.matchAll(/\nstream\n([\s\S]*?)endstream/g)){
+      const placements=[...page.matchAll(/^q 1 0 0 1 ([\d.]+) ([\d.]+) cm$/gm)];
+      for(const y of new Set(placements.map(([,x,y])=>y))){
+        const x=placements.filter(p=>p[2]===y).map(p=>Number(p[1]));
+        assert(x.every((value,i)=>i===0||value>x[i-1]));
+        rows.push(x.length);
+      }
+    }
+    assert.deepEqual(rows,Array.from({length:Math.ceil(entries.length/columns)},(_,i)=>Math.min(columns,entries.length-i*columns)));
+    assert.deepEqual([...pdf.matchAll(/\(Accord (\d+)\) Tj/g)].map(m=>Number(m[1])),entries.map((_,i)=>i+1));
+    assert(pdf.includes(columns>=4?'/MediaBox [0 0 841.89 595.28]':'/MediaBox [0 0 595.28 841.89]'));
+  }
 });
